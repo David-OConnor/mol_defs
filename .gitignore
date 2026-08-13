@@ -1,0 +1,25 @@
+# IDE
+*.iws
+.idea/workspace.xml
+
+# Rust
+/target
+Cargo.lock
+
+# Molecular formats
+*.pdb
+*.cif
+*.bcif
+*.gz
+*.sdf
+*.mol2
+*.xyz
+*.pdbqt
+*.mtz
+*.map
+
+# Parquet mol DBs
+*.pqt
+*.parquet
+
+/.claude

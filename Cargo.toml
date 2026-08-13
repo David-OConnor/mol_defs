@@ -1,0 +1,56 @@
+[package]
+name = "mol_defs"
+version = "0.1.0"
+edition = "2024"
+authors = ["David O'Connor <the_alchemist@fastmail.com>"]
+description = "Molecule data structures for computational chemistry and drug discovery"
+keywords = ["molecule", "atom", "conformer", "pharmacophore", "biology"]
+categories = [
+    "science::bioinformatics::proteomics",
+    "science::bioinformatics::sequence-analysis",
+    "science::computational-biology::structural-modeling",
+    "science::computational-chemistry::cheminformatics",
+]
+repository = "https://github.com/David-OConnor/mol_defs"
+documentation = "https://docs.rs/mol_defs"
+readme = "README.md"
+license = "MIT"
+exclude = [".gitignore"]
+
+
+[dependencies]
+# todo: Try to cut down on these dependencies; most notably dynamics.
+# todo: This may take reorganization.
+lin_alg = { version = "1.4.3", features = ["encode"] }
+na_seq = "0.3.15"
+bio_apis = { version = "0.2.8", features = ["encode"] }
+bio_files = { version = "0.5.3", features = ["encode"] }
+dynamics = { version = "0.2.1", features = ["encode"] }
+
+bincode = "2.0.1"
+rayon = "1.12.0"  # Parallel execution on CPU using thread pools.
+rand = "0.10.2"
+
+# Marching cubes, for the solvent-accessible surface. Not render-only: molecular volume and
+# topological surface area are measured from that surface, and both feed property inference.
+mcubes = "0.1.7"
+
+# Only for handing meshes to a render engine. A consumer that just needs the data structures
+# (e.g. ML inference) shouldn't have to pull in a GPU stack.
+graphics = { version = "0.6.3", features = ["app_utils"], optional = true }
+
+# We use these when developing locally to reduce friction.
+[patch.crates-io]
+graphics = { path = "../../graphics" }
+#lin_alg = { path = "../../lin_alg" }
+#na_seq = { path = "../na_seq" }
+bio_apis = { path = "../bio_apis" }
+bio_files = { path = "../bio_files" }
+dynamics = { path = "../dynamics" }
+
+
+[features]
+default = []
+# Converting surface meshes into a form the render engine draws, and the mesh fields on `Pocket`
+# which cache them.
+render = ["graphics"]
