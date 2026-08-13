@@ -38,7 +38,6 @@ use bio_files::{
     LipidStandard, ResidueEnd, ResidueType,
     mol_templates::load_templates,
 };
-use dynamics::params::LIPID_21_LIB;
 use lin_alg::f64::{Quaternion, Vec3, Y_VEC, Z_VEC};
 use na_seq::Element;
 use rand::{RngExt, distr::Uniform, rngs::ThreadRng};
@@ -778,10 +777,11 @@ impl MoleculeLipid {
 }
 
 /// Create lipid molecules from Amber's Lipids21.lib, which is included in the binary.
-pub fn load_lipid_templates() -> io::Result<Vec<MoleculeLipid>> {
+/// `lib_data` is likely `dynamics::LIPID_21_LIB`.
+pub fn load_lipid_templates(lib_data: &str) -> io::Result<Vec<MoleculeLipid>> {
     let mut result = Vec::new();
 
-    let templates = load_templates(LIPID_21_LIB)?;
+    let templates = load_templates(lib_data)?;
     for (ident, template) in templates {
         // todo: Move this to molecule mod A/R, e.g. lipid mod.
         let mut mol = MoleculeLipid {

@@ -5,10 +5,9 @@
 
 [Home page](https://www.athanorlab.com/rust-tools)
 
-This Rust library contains the molecule data structures used by [Molchanica](https://github.com/David-OConnor/molchanica)
-and its ADME inference library. Where [bio_files](https://crates.io/crates/bio_files) provides format-level
-types for reading and writing molecular files, this library provides the application-level types those are
-loaded into: ones carrying inferred properties, topology, and conformational data.
+This library contains the molecule data structures used by [Molchanica](https://github.com/David-OConnor/molchanica)
+and its ADME inference library. [bio_files](https://crates.io/crates/bio_files) provides simpler
+types for reading and writing molecular files; this one contains detailed ones with application-specific data.
 
 Its fundamental types are `Atom`, `Bond`, `Residue`, and `Chain`. Built atop these are the molecule types:
 `MoleculeSmall` for small organics, `MoleculePeptide` for proteins, plus `MoleculeNucleicAcid`,
