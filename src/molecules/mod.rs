@@ -328,15 +328,6 @@ impl<'a> MolGenericRefMut<'a> {
             Pocket(_) => MolType::Lipid,
         }
     }
-
-    // pub fn to_immut(&self) -> MoleculeGenericRef<'a> {
-    //     match self {
-    //         Self::Peptide(m) => MoleculeGenericRef::Peptide(m),
-    //         Self::Ligand(m) => MoleculeGenericRef::Ligand(m),
-    //         Self::NucleicAcid(m) => MoleculeGenericRef::NucleicAcid(m),
-    //         Self::Lipid(m) => MoleculeGenericRef::Lipid(m),
-    //     }
-    // }
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -998,6 +989,7 @@ pub enum MolIdent {
     IupacName(String),
     /// The title used for the PubChem compound summary page.
     PubchemTitle(String),
+    Chebi(u32),
 }
 
 impl MolIdent {
@@ -1012,6 +1004,7 @@ impl MolIdent {
             Self::InchIKey(v) => v.clone(),
             Self::IupacName(v) => v.clone(),
             Self::PubchemTitle(v) => v.clone(),
+            Self::Chebi(v) => v.to_string(),
         }
     }
 
@@ -1025,6 +1018,7 @@ impl MolIdent {
             Self::InchIKey(_) => "InChIKey",
             Self::IupacName(_) => "IUPAC",
             Self::PubchemTitle(_) => "PubChem Title",
+            Self::Chebi(_) => "ChEBI",
         }
         .to_owned()
     }
@@ -1041,6 +1035,7 @@ impl Display for MolIdent {
             Self::InchIKey(ident) => format!("InChIKey: {ident}"),
             Self::IupacName(ident) => format!("IUPAC: {ident}"),
             Self::PubchemTitle(ident) => format!("Title: {ident}"),
+            Self::Chebi(ident) => format!("ChEBI: {ident}"),
         };
 
         write!(f, "{v}")
