@@ -328,6 +328,18 @@ impl MoleculeCommon {
         result
     }
 
+    /// Filename prefixes used when caching molecules downloaded from an online source. See
+    /// `name()`.
+    const MANAGED_FILENAME_PREFIXES: [&str; 7] = [
+        "pubchem-",
+        "chebi-",
+        "drugbank-",
+        "rcsb-",
+        "geostd-",
+        "smiles-",
+        "built-in-",
+    ];
+
     /// Uses the `ident` field and filename (if different) from this struct. Uses the PubChem
     /// title as well, if available for small molecules. This text description may prove more
     /// useful for reading than just a CID. The filename may alternatively provide this
@@ -345,25 +357,28 @@ impl MoleculeCommon {
             }
         }
 
-        // This check prevents a duplicate if the filename is effectively
-        // the PubChem title.
-        if !result
-            .to_lowercase()
-            .contains(self.filename.to_lowercase().trim())
-        {
-            let filename = self.filename.as_str();
+        let filename = self.filename.to_lowercase();
+        let filename = filename.trim();
 
+        // Molecules downloaded from an API, and not explicitly saved by the user, are cached under
+        // a "provider-key" filename, e.g. "pubchem-3672". The key is generally the identifier we
+        // already display, so compare against the key alone to avoid repeating it.
+        let filename_key = Self::MANAGED_FILENAME_PREFIXES
+            .iter()
+            .find_map(|prefix| filename.strip_prefix(prefix))
+            .unwrap_or(filename);
+
+        // These checks prevent a duplicate if the filename is effectively the identifier, or the
+        // PubChem title.
+        if !filename_key.is_empty() && !result.to_lowercase().contains(filename_key) {
             // Don't show the full filename if it's long.
-            let (truncated, did_truncate) = if filename.chars().count() > 12 {
-                let mut s: String = filename.chars().take(12).collect();
+            let truncated = if self.filename.chars().count() > 12 {
+                let mut s: String = self.filename.chars().take(12).collect();
                 s.push_str("...");
-                (s, true)
+                s
             } else {
-                (filename.to_string(), false)
+                self.filename.clone()
             };
-
-            // (did_truncate is unused but kept to make intent obvious; remove if you want)
-            let _ = did_truncate;
 
             result.push_str(&format!(" | {truncated}"));
         }

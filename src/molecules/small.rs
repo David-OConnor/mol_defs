@@ -1,7 +1,7 @@
 //! Fundamental data structures for small organic molecules / ligands
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     io,
     path::{Path, PathBuf},
     sync::{mpsc, mpsc::Receiver},
@@ -57,6 +57,138 @@ pub struct MoleculeSmall {
     pub components: Option<MolComponents>,
 }
 
+/// Metadata keys used to persist molecule identifiers in formats that have no dedicated place for
+/// them (SDF data fields; our `@`-prefixed Mol2 equivalent). The first key of each list is the one
+/// we write; the rest are alternates we accept on load, e.g. the tags PubChem, ChEBI and DrugBank
+/// use in their own downloads. Matched case-insensitively.
+///
+/// ChEBI and PDBe are the main motivation: neither database includes its own accession in the
+/// files it serves, so once we look one up online, this is how it survives a save and re-load.
+const MD_KEYS_PUBCHEM: &[&str] = &[
+    "PUBCHEM_COMPOUND_CID",
+    // How ChEBI identifies a PubChem CID.
+    "PubChem Compound Database Links",
+    "PUBCHEM_CID",
+];
+/// ChEBI writes its accession as `ChEBI ID` in the SDFs it distributes, with a `CHEBI:` prefix on
+/// the value. (Its single-structure downloads are bare Molfiles with no data fields at all.)
+const MD_KEYS_CHEBI: &[&str] = &["ChEBI ID", "CHEBI_ID", "ChEBI Database Links"];
+/// PDBe/Amber GeoStd chemical component idents, e.g. "ATP". No source we load from publishes a tag
+/// for these, so `PDBE_ID` is ours.
+const MD_KEYS_PDBE: &[&str] = &["PDBE_ID", "PDBeChem Database Links", "PDB Database Links"];
+const MD_KEYS_DRUGBANK: &[&str] = &["DRUGBANK_ID", "DrugBank Database Links"];
+const MD_KEYS_SMILES: &[&str] = &[
+    "SMILES",
+    "PUBCHEM_SMILES",
+    "PUBCHEM_OPENEYE_ISO_SMILES",
+    "PUBCHEM_OPENEYE_CAN_SMILES",
+];
+const MD_KEYS_INCHI: &[&str] = &["INCHI", "PUBCHEM_IUPAC_INCHI"];
+const MD_KEYS_INCHI_KEY: &[&str] = &["INCHIKEY", "PUBCHEM_IUPAC_INCHIKEY"];
+const MD_KEYS_IUPAC_NAME: &[&str] = &["IUPAC_NAME", "PUBCHEM_IUPAC_NAME"];
+const MD_KEYS_PUBCHEM_TITLE: &[&str] = &["PUBCHEM_TITLE"];
+
+/// DrugBank's SDF distribution names its source database instead of using a DrugBank-specific tag.
+const MD_KEY_DB_NAME: &str = "DATABASE_NAME";
+const MD_KEY_DB_ID: &str = "DATABASE_ID";
+
+/// Case-insensitive metadata lookup over candidate keys, in priority order. Values that list
+/// several cross-references, one per line, are reduced to the first.
+fn md_get<'a>(metadata: &'a HashMap<String, String>, keys: &[&str]) -> Option<&'a str> {
+    for key in keys {
+        for (k, v) in metadata {
+            if !k.eq_ignore_ascii_case(key) {
+                continue;
+            }
+
+            let v = v.lines().next().unwrap_or_default().trim();
+            if !v.is_empty() {
+                return Some(v);
+            }
+        }
+    }
+
+    None
+}
+
+/// ChEBI accessions are conventionally written `CHEBI:15377`; accept a bare number as well.
+fn parse_chebi_id(val: &str) -> Option<u32> {
+    let val = val.trim();
+    let digits = match val.get(..6) {
+        Some(prefix) if prefix.eq_ignore_ascii_case("CHEBI:") => &val[6..],
+        _ => val,
+    };
+
+    digits.trim().parse().ok()
+}
+
+/// Extract identifiers from file metadata. This is the load half of the round trip;
+/// `MoleculeSmall::metadata_with_ids_pocket` is the save half.
+fn idents_from_metadata(ident: &str, metadata: &HashMap<String, String>) -> Vec<MolIdent> {
+    let mut result = Vec::new();
+
+    if let Some(v) = md_get(metadata, MD_KEYS_PUBCHEM)
+        && let Ok(cid) = v.parse::<u32>()
+    {
+        result.push(MolIdent::PubChem(cid));
+    }
+
+    if let Some(v) = md_get(metadata, MD_KEYS_CHEBI)
+        && let Some(id) = parse_chebi_id(v)
+    {
+        result.push(MolIdent::Chebi(id));
+    }
+
+    if let Some(v) = md_get(metadata, MD_KEYS_PDBE) {
+        result.push(MolIdent::PdbeAmber(v.to_owned()));
+    }
+
+    if let Some(v) = md_get(metadata, MD_KEYS_DRUGBANK) {
+        result.push(MolIdent::DrugBank(v.to_owned()));
+    }
+
+    // Seen in ChEBI, and in the tags we write ourselves. Not on PubChem SDFs, which use the
+    // `PUBCHEM_`-prefixed alternates.
+    if let Some(v) = md_get(metadata, MD_KEYS_SMILES) {
+        result.push(MolIdent::Smiles(v.to_owned()));
+    }
+    if let Some(v) = md_get(metadata, MD_KEYS_INCHI) {
+        result.push(MolIdent::InchI(v.to_owned()));
+    }
+    if let Some(v) = md_get(metadata, MD_KEYS_INCHI_KEY) {
+        result.push(MolIdent::InchIKey(v.to_owned()));
+    }
+    if let Some(v) = md_get(metadata, MD_KEYS_IUPAC_NAME) {
+        result.push(MolIdent::IupacName(v.to_owned()));
+    }
+    if let Some(v) = md_get(metadata, MD_KEYS_PUBCHEM_TITLE) {
+        result.push(MolIdent::PubchemTitle(v.to_owned()));
+    }
+
+    if let Some(db_name) = md_get(metadata, &[MD_KEY_DB_NAME])
+        && db_name.eq_ignore_ascii_case("drugbank")
+    {
+        if let Some(v) = md_get(metadata, &[MD_KEY_DB_ID]) {
+            result.push(MolIdent::DrugBank(v.to_owned()));
+        }
+        // This seems to be valid for Drugbank-sourced molecules.
+        if let Ok(cid) = ident.parse::<u32>() {
+            result.push(MolIdent::PubChem(cid));
+        }
+    }
+
+    if !ident.is_empty()
+        && ident.len() <= 4
+        && ident.parse::<u32>().is_err()
+        && !result.iter().any(|i| matches!(i, MolIdent::PdbeAmber(_)))
+    {
+        // This is a guess
+        result.push(MolIdent::PdbeAmber(ident.to_owned()));
+    }
+
+    result
+}
+
 impl MoleculeSmall {
     /// This constructor handles assumes details are ingested into a common format upstream. It adds
     /// them to the resulting structure, and augments it with bonds, hydrogen positions, and other things A/R.
@@ -67,59 +199,18 @@ impl MoleculeSmall {
         metadata: HashMap<String, String>,
         path: Option<PathBuf>,
     ) -> Self {
-        let mut idents = Vec::new();
-
-        if let Some(id) = metadata.get("PUBCHEM_COMPOUND_CID")
-            && let Ok(cid) = id.parse::<u32>()
-        {
-            idents.push(MolIdent::PubChem(cid));
-        };
-
-        // How ChEBI identifies PubChem CID.
-        if let Some(id) = metadata.get("PubChem Compound Database Links")
-            && let Ok(cid) = id.parse::<u32>()
-        {
-            idents.push(MolIdent::PubChem(cid));
-        };
-
-        // Seen in ChEBI. Not on Pubchem SDFs.
-        if let Some(id) = metadata.get("SMILES") {
-            idents.push(MolIdent::Smiles(id.to_string()));
-        };
-        // Seen in ChEBI. Not on Pubchem SDFs.
-        if let Some(id) = metadata.get("INCHI") {
-            idents.push(MolIdent::InchI(id.to_string()));
-        };
-        // Seen in ChEBI. Not on Pubchem SDFs.
-        if let Some(id) = metadata.get("INCHIKEY") {
-            idents.push(MolIdent::InchIKey(id.to_string()));
-        };
-        // Seen in ChEBI. Not on Pubchem SDFs.
-        if let Some(id) = metadata.get("IUPAC_NAME") {
-            idents.push(MolIdent::IupacName(id.to_string()));
-        };
-
-        if let Some(db_name) = metadata.get("DATABASE_NAME")
-            && db_name.to_lowercase() == "drugbank"
-        {
-            if let Some(id) = metadata.get("DATABASE_ID") {
-                idents.push(MolIdent::DrugBank(id.clone()));
-            }
-            // This seems to be valid for Drugbank-sourced molecules.
-            if let Ok(id) = ident.parse::<u32>() {
-                idents.push(MolIdent::PubChem(id));
-            }
-        }
-
-        if ident.len() <= 4 && ident.parse::<u32>().is_err() {
-            // This is a guess
-            idents.push(MolIdent::PdbeAmber(ident.clone()));
-        }
+        let mut idents = idents_from_metadata(&ident, &metadata);
 
         let common = MoleculeCommon::new(ident, atoms, bonds, metadata, path);
 
-        let smiles = common.to_smiles();
-        idents.push(MolIdent::Smiles(smiles));
+        // Fall back to a SMILES string derived from the structure if the file didn't carry one.
+        if !idents.iter().any(|i| matches!(i, MolIdent::Smiles(_))) {
+            idents.push(MolIdent::Smiles(common.to_smiles()));
+        }
+
+        // Sources overlap; e.g. a PubChem CID can arrive under two different tags.
+        let mut seen = HashSet::new();
+        idents.retain(|ident| seen.insert(ident.clone()));
 
         Self {
             common,
@@ -302,13 +393,35 @@ impl MoleculeSmall {
         for ident in &self.idents {
             match ident {
                 MolIdent::PubChem(cid) => {
-                    res.insert("PUBCHEM_COMPOUND_CID".to_string(), cid.to_string());
+                    res.insert(MD_KEYS_PUBCHEM[0].to_string(), cid.to_string());
+                }
+                MolIdent::Chebi(id) => {
+                    res.insert(MD_KEYS_CHEBI[0].to_string(), format!("CHEBI:{id}"));
+                }
+                MolIdent::PdbeAmber(id) => {
+                    res.insert(MD_KEYS_PDBE[0].to_string(), id.clone());
                 }
                 MolIdent::DrugBank(id) => {
-                    res.insert("DATABASE_ID".to_string(), id.clone());
-                    res.insert("DATABASE_NAME".to_string(), "drugbank".to_string());
+                    res.insert(MD_KEYS_DRUGBANK[0].to_string(), id.clone());
+                    // The pair DrugBank's own SDFs use.
+                    res.insert(MD_KEY_DB_ID.to_string(), id.clone());
+                    res.insert(MD_KEY_DB_NAME.to_string(), "drugbank".to_string());
                 }
-                _ => (),
+                MolIdent::Smiles(v) => {
+                    res.insert(MD_KEYS_SMILES[0].to_string(), v.clone());
+                }
+                MolIdent::InchI(v) => {
+                    res.insert(MD_KEYS_INCHI[0].to_string(), v.clone());
+                }
+                MolIdent::InchIKey(v) => {
+                    res.insert(MD_KEYS_INCHI_KEY[0].to_string(), v.clone());
+                }
+                MolIdent::IupacName(v) => {
+                    res.insert(MD_KEYS_IUPAC_NAME[0].to_string(), v.clone());
+                }
+                MolIdent::PubchemTitle(v) => {
+                    res.insert(MD_KEYS_PUBCHEM_TITLE[0].to_string(), v.clone());
+                }
             }
         }
 
@@ -955,4 +1068,125 @@ fn pharmacophore_to_biofiles(ph: &Pharmacophore) -> io::Result<Vec<Pharmacophore
     }
 
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        fs,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    use bio_files::{BondType, SdfFormat};
+    use lin_alg::f64::Vec3;
+    use na_seq::Element;
+
+    use super::*;
+
+    fn temp_path(extension: &str) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "mol-defs-idents-{}-{nonce}.{extension}",
+            std::process::id()
+        ))
+    }
+
+    /// A stand-in molecule with no identifiers in its metadata. Its ident is deliberately longer
+    /// than a PDBe chemical component code, so `new` doesn't guess one.
+    fn test_mol() -> MoleculeSmall {
+        let atoms = vec![
+            Atom {
+                serial_number: 1,
+                posit: Vec3::new_zero(),
+                element: Element::Carbon,
+                ..Default::default()
+            },
+            Atom {
+                serial_number: 2,
+                posit: Vec3::new(1.4, 0., 0.),
+                element: Element::Oxygen,
+                ..Default::default()
+            },
+        ];
+
+        let bonds = vec![Bond {
+            bond_type: BondType::Single,
+            atom_0_sn: 1,
+            atom_1_sn: 2,
+            atom_0: 0,
+            atom_1: 1,
+            is_backbone: false,
+        }];
+
+        MoleculeSmall::new("Methanol".to_owned(), atoms, bonds, HashMap::new(), None)
+    }
+
+    /// ChEBI and PDBe accessions are absent from the files those databases serve, so they only
+    /// persist if we write and read our own metadata tags for them.
+    #[test]
+    fn idents_round_trip_through_sdf_and_mol2() {
+        let mut mol = test_mol();
+
+        mol.idents.push(MolIdent::Chebi(15377));
+        mol.idents.push(MolIdent::PdbeAmber("ATP".to_owned()));
+        mol.idents.push(MolIdent::PubChem(962));
+        mol.idents.push(MolIdent::DrugBank("DB09145".to_owned()));
+        mol.idents
+            .push(MolIdent::InchI("InChI=1S/H2O/h1H2".to_owned()));
+        mol.idents
+            .push(MolIdent::InchIKey("XLYOFNOQVPJJNP-UHFFFAOYSA-N".to_owned()));
+        mol.idents.push(MolIdent::IupacName("oxidane".to_owned()));
+        mol.idents.push(MolIdent::PubchemTitle("Water".to_owned()));
+
+        let expected = mol.idents.clone();
+
+        let sdf_path = temp_path("sdf");
+        mol.to_sdf().save(&sdf_path, SdfFormat::V2000).unwrap();
+        let from_sdf: MoleculeSmall = Sdf::load(&sdf_path).unwrap().try_into().unwrap();
+        fs::remove_file(&sdf_path).unwrap();
+
+        let mol2_path = temp_path("mol2");
+        mol.to_mol2().save(&mol2_path).unwrap();
+        let from_mol2: MoleculeSmall = Mol2::load(&mol2_path).unwrap().try_into().unwrap();
+        fs::remove_file(&mol2_path).unwrap();
+
+        for ident in &expected {
+            assert!(
+                from_sdf.idents.contains(ident),
+                "SDF round trip lost {ident:?}"
+            );
+            assert!(
+                from_mol2.idents.contains(ident),
+                "Mol2 round trip lost {ident:?}"
+            );
+        }
+    }
+
+    /// ChEBI's own SDF tag, and the bare-number form.
+    #[test]
+    fn chebi_accessions_parse_with_and_without_their_prefix() {
+        assert_eq!(parse_chebi_id("CHEBI:15377"), Some(15377));
+        assert_eq!(parse_chebi_id(" chebi:15377 "), Some(15377));
+        assert_eq!(parse_chebi_id("15377"), Some(15377));
+        assert_eq!(parse_chebi_id("CHEBI:"), None);
+
+        let mut metadata = HashMap::new();
+        metadata.insert("ChEBI ID".to_owned(), "CHEBI:15377".to_owned());
+        metadata.insert("PDBE_ID".to_owned(), "HOH".to_owned());
+
+        let idents = idents_from_metadata("water", &metadata);
+        assert!(idents.contains(&MolIdent::Chebi(15377)));
+        assert!(idents.contains(&MolIdent::PdbeAmber("HOH".to_owned())));
+        // The explicit tag wins over the guess made from the molecule's ident.
+        assert_eq!(
+            idents
+                .iter()
+                .filter(|i| matches!(i, MolIdent::PdbeAmber(_)))
+                .count(),
+            1
+        );
+    }
 }
