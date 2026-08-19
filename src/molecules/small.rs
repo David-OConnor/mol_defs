@@ -37,6 +37,7 @@ use crate::{
     properties::{mol_characterization::MolCharacterization, therapeutic::TherapeuticProperties},
     screening::pharmacophore::{Pharmacophore, PharmacophoreFeature},
 };
+use crate::molecules::MolIdentType;
 
 /// A molecule representing a small organic molecule. Omits mol-generic fields.
 #[derive(Debug, Default, Clone)]
@@ -87,6 +88,9 @@ const MD_KEYS_INCHI: &[&str] = &["INCHI", "PUBCHEM_IUPAC_INCHI"];
 const MD_KEYS_INCHI_KEY: &[&str] = &["INCHIKEY", "PUBCHEM_IUPAC_INCHIKEY"];
 const MD_KEYS_IUPAC_NAME: &[&str] = &["IUPAC_NAME", "PUBCHEM_IUPAC_NAME"];
 const MD_KEYS_PUBCHEM_TITLE: &[&str] = &["PUBCHEM_TITLE"];
+/// HMDB's own SDF distribution puts its accession in the generic `DATABASE_ID` field (paired with
+/// `DATABASE_NAME`), so `HMDB_ID` is ours; the rest are cross-references other sources publish.
+const MD_KEYS_HMDB: &[&str] = &["HMDB_ID", "HMDB Database Links", "HMDB"];
 
 /// DrugBank's SDF distribution names its source database instead of using a DrugBank-specific tag.
 const MD_KEY_DB_NAME: &str = "DATABASE_NAME";
@@ -122,9 +126,28 @@ fn parse_chebi_id(val: &str) -> Option<u32> {
     digits.trim().parse().ok()
 }
 
+/// HMDB accessions are conventionally written `HMDB0000122`: an `HMDB` prefix, then a zero-padded
+/// number. (Pre-2019 accessions used five digits instead of seven.) Accept a bare number as well.
+fn parse_hmdb_id(val: &str) -> Option<u32> {
+    let val = val.trim();
+    let digits = match val.get(..4) {
+        Some(prefix) if prefix.eq_ignore_ascii_case("HMDB") => &val[4..],
+        _ => val,
+    };
+
+    digits.trim().parse().ok()
+}
+
+/// The conventional way to write an HMDB accession, e.g. `122` -> `"HMDB0000122"`. The inverse of
+/// [`parse_hmdb_id`]; HMDB itself always writes the prefix and the padding, so this is the form we
+/// store in metadata and show in the UI.
+pub fn hmdb_accession(id: u32) -> String {
+    format!("HMDB{id:07}")
+}
+
 /// Extract identifiers from file metadata. This is the load half of the round trip;
 /// `MoleculeSmall::metadata_with_ids_pocket` is the save half.
-fn idents_from_metadata(ident: &str, metadata: &HashMap<String, String>) -> Vec<MolIdent> {
+pub fn idents_from_metadata(ident: &str, metadata: &HashMap<String, String>) -> Vec<MolIdent> {
     let mut result = Vec::new();
 
     if let Some(v) = md_get(metadata, MD_KEYS_PUBCHEM)
@@ -137,6 +160,12 @@ fn idents_from_metadata(ident: &str, metadata: &HashMap<String, String>) -> Vec<
         && let Some(id) = parse_chebi_id(v)
     {
         result.push(MolIdent::Chebi(id));
+    }
+
+    if let Some(v) = md_get(metadata, MD_KEYS_HMDB)
+        && let Some(id) = parse_hmdb_id(v)
+    {
+        result.push(MolIdent::Hmdb(id));
     }
 
     if let Some(v) = md_get(metadata, MD_KEYS_PDBE) {
@@ -165,15 +194,23 @@ fn idents_from_metadata(ident: &str, metadata: &HashMap<String, String>) -> Vec<
         result.push(MolIdent::PubchemTitle(v.to_owned()));
     }
 
-    if let Some(db_name) = md_get(metadata, &[MD_KEY_DB_NAME])
-        && db_name.eq_ignore_ascii_case("drugbank")
-    {
-        if let Some(v) = md_get(metadata, &[MD_KEY_DB_ID]) {
-            result.push(MolIdent::DrugBank(v.to_owned()));
+    if let Some(db_name) = md_get(metadata, &[MD_KEY_DB_NAME]) {
+        if db_name.eq_ignore_ascii_case("drugbank") {
+            if let Some(v) = md_get(metadata, &[MD_KEY_DB_ID]) {
+                result.push(MolIdent::DrugBank(v.to_owned()));
+            }
+            // This seems to be valid for Drugbank-sourced molecules.
+            if let Ok(cid) = ident.parse::<u32>() {
+                result.push(MolIdent::PubChem(cid));
+            }
         }
-        // This seems to be valid for Drugbank-sourced molecules.
-        if let Ok(cid) = ident.parse::<u32>() {
-            result.push(MolIdent::PubChem(cid));
+
+        // HMDB's own SDF distribution tags its accession this way, in addition to `HMDB_ID`.
+        if db_name.eq_ignore_ascii_case("hmdb")
+            && let Some(v) = md_get(metadata, &[MD_KEY_DB_ID])
+            && let Some(id) = parse_hmdb_id(v)
+        {
+            result.push(MolIdent::Hmdb(id));
         }
     }
 
@@ -235,6 +272,19 @@ impl MoleculeSmall {
         self.conformer = characterize_conformations(self, ff_params);
     }
 
+    /// Returns the first if multiple entries of a given ident type exist for
+    /// this molecule.
+    pub fn get_ident(&self, ident_type: MolIdentType) -> Option<&MolIdent> {
+        for ident in &self.idents {
+            if ident.ident_type() == ident_type {
+                return Some(ident)
+            }
+        }
+
+        None
+    }
+
+    /// Perhaps redundant with `get_ident`.
     pub fn get_smiles(&self) -> Option<&str> {
         for ident in &self.idents {
             if let MolIdent::Smiles(id) = ident {
@@ -421,6 +471,9 @@ impl MoleculeSmall {
                 }
                 MolIdent::PubchemTitle(v) => {
                     res.insert(MD_KEYS_PUBCHEM_TITLE[0].to_string(), v.clone());
+                }
+                MolIdent::Hmdb(id) => {
+                    res.insert(MD_KEYS_HMDB[0].to_string(), hmdb_accession(*id));
                 }
             }
         }
@@ -1140,6 +1193,7 @@ mod tests {
             .push(MolIdent::InchIKey("XLYOFNOQVPJJNP-UHFFFAOYSA-N".to_owned()));
         mol.idents.push(MolIdent::IupacName("oxidane".to_owned()));
         mol.idents.push(MolIdent::PubchemTitle("Water".to_owned()));
+        mol.idents.push(MolIdent::Hmdb(2111));
 
         let expected = mol.idents.clone();
 
@@ -1188,5 +1242,29 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    /// HMDB's zero-padded accession, the shorter pre-2019 form, and a bare number.
+    #[test]
+    fn hmdb_accessions_parse_with_and_without_their_prefix() {
+        assert_eq!(parse_hmdb_id("HMDB0002111"), Some(2111));
+        assert_eq!(parse_hmdb_id(" hmdb00122 "), Some(122));
+        assert_eq!(parse_hmdb_id("2111"), Some(2111));
+        assert_eq!(parse_hmdb_id("HMDB"), None);
+
+        assert_eq!(hmdb_accession(2111), "HMDB0002111");
+
+        // The tag HMDB writes in the SDFs it distributes, alongside the generic pair.
+        let mut metadata = HashMap::new();
+        metadata.insert("HMDB_ID".to_owned(), "HMDB0002111".to_owned());
+
+        assert!(idents_from_metadata("", &metadata).contains(&MolIdent::Hmdb(2111)));
+
+        // `DATABASE_ID` alone, as HMDB's own distribution names it.
+        let mut metadata = HashMap::new();
+        metadata.insert("DATABASE_NAME".to_owned(), "hmdb".to_owned());
+        metadata.insert("DATABASE_ID".to_owned(), "HMDB0002111".to_owned());
+
+        assert!(idents_from_metadata("", &metadata).contains(&MolIdent::Hmdb(2111)));
     }
 }

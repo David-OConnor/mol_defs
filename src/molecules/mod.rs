@@ -32,7 +32,7 @@ use dynamics::{Dihedral, FfMolType};
 use lin_alg::f64::Vec3;
 use na_seq::{AminoAcid, AtomTypeInRes, Element};
 use peptide::MoleculePeptide;
-use small::MoleculeSmall;
+use small::{MoleculeSmall, hmdb_accession};
 
 use crate::molecules::{
     common::MoleculeCommon, lipid::MoleculeLipid, nucleic_acid::MoleculeNucleicAcid, pocket::Pocket,
@@ -969,6 +969,41 @@ fn init_bonds_chains_res(
     Ok((atoms, bonds, residues, chains))
 }
 
+/// For small organic molecules. Unlike [`MolIdent`], does not encode the indenfier itself.
+/// Variants here map 1:1 with `MolIdent`.
+#[derive(Clone, PartialEq, Eq, Hash, Debug, Decode, Encode)]
+pub enum MolIdentType {
+    PubChem,
+    DrugBank,
+    PdbeAmber,
+    Smiles,
+    InchI,
+    InchIKey,
+    IupacName,
+    PubchemTitle,
+    Chebi,
+    Hmdb,
+}
+
+impl Display for MolIdentType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let v = match self {
+            Self::PubChem => "PubChem CID",
+            Self::DrugBank => "DrugBank",
+            Self::PdbeAmber => "PDBe",
+            Self::Smiles => "SMILES",
+            Self::InchI => "InChI",
+            Self::InchIKey => "InChIKey",
+            Self::IupacName => "IUPAC",
+            Self::PubchemTitle => "PubChem Title",
+            Self::Chebi => "ChEBI",
+            Self::Hmdb => "HMDB",
+        };
+
+        write!(f, "{v}")
+    }
+}
+
 /// For small organic molecules.
 #[derive(Clone, PartialEq, Eq, Hash, Debug, Decode, Encode)]
 pub enum MolIdent {
@@ -990,6 +1025,8 @@ pub enum MolIdent {
     /// The title used for the PubChem compound summary page.
     PubchemTitle(String),
     Chebi(u32),
+    /// Human Metabolome Database
+    Hmdb(u32),
 }
 
 impl MolIdent {
@@ -1005,22 +1042,24 @@ impl MolIdent {
             Self::IupacName(v) => v.clone(),
             Self::PubchemTitle(v) => v.clone(),
             Self::Chebi(v) => v.to_string(),
+            // The zero-padded `HMDB` prefix is part of the accession, unlike ChEBI's bare number.
+            Self::Hmdb(v) => hmdb_accession(*v),
         }
     }
 
-    pub fn label(&self) -> String {
+    pub fn ident_type(&self) -> MolIdentType {
         match self {
-            Self::PubChem(_) => "PubChem CID",
-            Self::DrugBank(_) => "DrugBank",
-            Self::PdbeAmber(_) => "PDBe",
-            Self::Smiles(_) => "SMILES",
-            Self::InchI(_) => "InChI",
-            Self::InchIKey(_) => "InChIKey",
-            Self::IupacName(_) => "IUPAC",
-            Self::PubchemTitle(_) => "PubChem Title",
-            Self::Chebi(_) => "ChEBI",
+            Self::PubChem(_) => MolIdentType::PubChem,
+            Self::DrugBank(_) => MolIdentType::DrugBank,
+            Self::PdbeAmber(_) => MolIdentType::PdbeAmber,
+            Self::Smiles(_) => MolIdentType::Smiles,
+            Self::InchI(_) => MolIdentType::InchI,
+            Self::InchIKey(_) => MolIdentType::InchIKey,
+            Self::IupacName(_) => MolIdentType::IupacName,
+            Self::PubchemTitle(_) => MolIdentType::PubchemTitle,
+            Self::Chebi(_) => MolIdentType::Chebi,
+            Self::Hmdb(_) => MolIdentType::Hmdb,
         }
-        .to_owned()
     }
 }
 
@@ -1036,6 +1075,8 @@ impl Display for MolIdent {
             Self::IupacName(ident) => format!("IUPAC: {ident}"),
             Self::PubchemTitle(ident) => format!("Title: {ident}"),
             Self::Chebi(ident) => format!("ChEBI: {ident}"),
+            // The accession is written with its own `HMDB` prefix, so it needs no label.
+            Self::Hmdb(ident) => hmdb_accession(*ident),
         };
 
         write!(f, "{v}")
