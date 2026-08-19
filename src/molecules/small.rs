@@ -71,7 +71,7 @@ const MD_KEYS_PUBCHEM: &[&str] = &[
     "PubChem Compound Database Links",
     "PUBCHEM_CID",
 ];
-/// ChEBI writes its accession as `ChEBI ID` in the SDFs it distributes, with a `CHEBI:` prefix on
+/// ChEBI writes its accession as `ChEBI ID` in the bulk DB SDFs it distributes, with a `CHEBI:` prefix on
 /// the value. (Its single-structure downloads are bare Molfiles with no data fields at all.)
 const MD_KEYS_CHEBI: &[&str] = &["ChEBI ID", "CHEBI_ID", "ChEBI Database Links"];
 /// PDBe/Amber GeoStd chemical component idents, e.g. "ATP". No source we load from publishes a tag
@@ -90,11 +90,15 @@ const MD_KEYS_IUPAC_NAME: &[&str] = &["IUPAC_NAME", "PUBCHEM_IUPAC_NAME"];
 const MD_KEYS_PUBCHEM_TITLE: &[&str] = &["PUBCHEM_TITLE"];
 /// HMDB's own SDF distribution puts its accession in the generic `DATABASE_ID` field (paired with
 /// `DATABASE_NAME`), so `HMDB_ID` is ours; the rest are cross-references other sources publish.
+/// ChEBI uses the "HMDB Database Links" metadata tag to indicate these.
 const MD_KEYS_HMDB: &[&str] = &["HMDB_ID", "HMDB Database Links", "HMDB"];
 
 /// DrugBank's SDF distribution names its source database instead of using a DrugBank-specific tag.
 const MD_KEY_DB_NAME: &str = "DATABASE_NAME";
 const MD_KEY_DB_ID: &str = "DATABASE_ID";
+
+// Seen in ChEBI's bulk download SDF. implementation: todo.
+const MD_KEYS_KEGG: &[&str] = &["KEGG COMPOUND Database Links"];
 
 /// Case-insensitive metadata lookup over candidate keys, in priority order. Values that list
 /// several cross-references, one per line, are reduced to the first.
@@ -474,6 +478,9 @@ impl MoleculeSmall {
                 }
                 MolIdent::Hmdb(id) => {
                     res.insert(MD_KEYS_HMDB[0].to_string(), hmdb_accession(*id));
+                }
+                MolIdent::Kegg(v) => {
+                    res.insert(MD_KEYS_KEGG[0].to_string(), v.clone());
                 }
             }
         }
@@ -1268,3 +1275,4 @@ mod tests {
         assert!(idents_from_metadata("", &metadata).contains(&MolIdent::Hmdb(2111)));
     }
 }
+

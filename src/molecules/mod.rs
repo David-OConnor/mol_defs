@@ -983,6 +983,7 @@ pub enum MolIdentType {
     PubchemTitle,
     Chebi,
     Hmdb,
+    Kegg,
 }
 
 impl Display for MolIdentType {
@@ -998,6 +999,7 @@ impl Display for MolIdentType {
             Self::PubchemTitle => "PubChem Title",
             Self::Chebi => "ChEBI",
             Self::Hmdb => "HMDB",
+            Self::Kegg => "KEGG",
         };
 
         write!(f, "{v}")
@@ -1027,6 +1029,8 @@ pub enum MolIdent {
     Chebi(u32),
     /// Human Metabolome Database
     Hmdb(u32),
+    /// Kyoto Encyclopedia of Genes and Genomes
+    Kegg(String),
 }
 
 impl MolIdent {
@@ -1044,6 +1048,7 @@ impl MolIdent {
             Self::Chebi(v) => v.to_string(),
             // The zero-padded `HMDB` prefix is part of the accession, unlike ChEBI's bare number.
             Self::Hmdb(v) => hmdb_accession(*v),
+            Self::Kegg(v) => v.clone(),
         }
     }
 
@@ -1059,6 +1064,7 @@ impl MolIdent {
             Self::PubchemTitle(_) => MolIdentType::PubchemTitle,
             Self::Chebi(_) => MolIdentType::Chebi,
             Self::Hmdb(_) => MolIdentType::Hmdb,
+            Self::Kegg(_) => MolIdentType::Kegg,
         }
     }
 }
@@ -1066,7 +1072,7 @@ impl MolIdent {
 impl Display for MolIdent {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let v = match self {
-            Self::PubChem(cid) => format!("PubChem CID: {}", cid),
+            Self::PubChem(cid) => format!("PubChem CID: {cid}"),
             Self::DrugBank(ident) => format!("DrugBank: {ident}"),
             Self::PdbeAmber(ident) => format!("PDBe: {ident}"),
             Self::Smiles(ident) => format!("SMILES: {ident}"),
@@ -1077,6 +1083,7 @@ impl Display for MolIdent {
             Self::Chebi(ident) => format!("ChEBI: {ident}"),
             // The accession is written with its own `HMDB` prefix, so it needs no label.
             Self::Hmdb(ident) => hmdb_accession(*ident),
+            Self::Kegg(ident) => format!("KEGG: {ident}"),
         };
 
         write!(f, "{v}")
