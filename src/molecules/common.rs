@@ -11,10 +11,7 @@ use std::{
 use bio_files::BondType;
 use dynamics::{find_planar_posit, find_tetra_posit_final, find_tetra_posits};
 use lin_alg::f64::{Quaternion, Vec3};
-use na_seq::{
-    Element,
-    Element::{Carbon, Hydrogen, Nitrogen, Oxygen},
-};
+use na_seq::{Element, Element::Hydrogen};
 
 // // Used by the mol editor, and alignment. Be careful with this!
 // pub static NEXT_ATOM_SN: AtomicU32 = AtomicU32::new(0);
@@ -417,7 +414,6 @@ impl MoleculeCommon {
         bond_len: Option<f64>,
         q: Option<f32>,
     ) -> Option<(usize, usize)> {
-        let posit_parent = self.atom_posits[i_par];
         let el_parent = self.atoms[i_par].element;
 
         if el_parent == Hydrogen {
@@ -425,23 +421,21 @@ impl MoleculeCommon {
         }
 
         // Delete hydrogens; we'll add back if required.
+        let par_sn = self.atoms[i_par].serial_number;
         if element != Hydrogen {
             remove_hydrogens(self, i_par);
         }
 
-        let atoms_to_add = bonds_avail(i_par, self, el_parent);
-        let currently_bound_count = self.adjacency_list[i_par].len();
+        // Removing hydrogens shifts the index of every atom that followed them, so the caller's
+        // `i_par` is only valid if all of this atom's H happen to come after it in the list.
+        // Serial numbers are stable across removals; re-derive the index from ours.
+        let i_par = self.atoms.iter().position(|a| a.serial_number == par_sn)?;
+        let posit_parent = self.atom_posits[i_par];
 
-        // let geom = match atoms_to_add {
-        let geom = match atoms_to_add + currently_bound_count {
-            4 => BondGeom::Tetrahedral,
-            3 => BondGeom::Planar,
-            2 => BondGeom::Linear,
-            _ => {
-                eprintln!("Error: Unexpected atoms to add count.");
-                BondGeom::Tetrahedral
-            }
-        };
+        // Geometry comes from the bond orders this atom carries, not from its free valence: lone
+        // pairs occupy coordination sites too, so an ether O (two single bonds) is bent like an
+        // sp3 carbon rather than linear, and an amine N is pyramidal rather than trigonal planar.
+        let geom = geom_for_atom(i_par, &self.bonds);
 
         // todo: Can't use `common` below here due to the delete_atom code and ownership.
         let posit = find_appended_posit(
@@ -700,43 +694,90 @@ pub fn find_appended_posit(
     }
 }
 
-pub fn bonds_avail(i_atom: usize, mol: &MoleculeCommon, el: Element) -> usize {
-    let mut bonds_avail: isize = match el {
-        Carbon => 4,
-        Oxygen => 2,
-        Nitrogen => 3, // todo?
-        Element::Chlorine => 0,
-        _ => 0, // todo?
-    };
+/// The coordination geometry around an atom, from the bond orders it carries. Note that this
+/// counts lone pairs implicitly: an atom with only single bonds is tetrahedral whatever its
+/// element, so an ether O comes out bent (~109°) rather than linear.
+pub fn geom_for_atom(i: usize, bonds: &[Bond]) -> BondGeom {
+    let atom_bonds: Vec<&Bond> = bonds
+        .iter()
+        .filter(|b| b.atom_0 == i || b.atom_1 == i)
+        .collect();
 
-    let mut ar_count = 0;
-    for bond in &mol.bonds {
+    if atom_bonds.iter().any(|b| b.bond_type == BondType::Triple) {
+        return BondGeom::Linear;
+    }
+
+    // Cumulated diene (allene-type, e.g. C=C=C): the central atom carries two
+    // double bonds and is sp-hybridised (linear), not sp2.
+    let double_count = atom_bonds
+        .iter()
+        .filter(|b| b.bond_type == BondType::Double)
+        .count();
+    if double_count >= 2 {
+        return BondGeom::Linear;
+    }
+
+    if atom_bonds
+        .iter()
+        .any(|b| matches!(b.bond_type, BondType::Double | BondType::Aromatic))
+    {
+        BondGeom::Planar
+    } else {
+        BondGeom::Tetrahedral
+    }
+}
+
+/// The bond order an atom already carries, doubled so aromatic bonds (order 1.5) stay in integer
+/// arithmetic. A benzene carbon's two aromatic bonds come to 6 here, i.e. an order of 3.
+fn bond_order_x2(i_atom: usize, bonds: &[Bond]) -> isize {
+    let mut result = 0;
+
+    for bond in bonds {
         if bond.atom_0 != i_atom && bond.atom_1 != i_atom {
             continue;
         }
 
-        match bond.bond_type {
-            BondType::Single => bonds_avail -= 1,
-            BondType::Double => bonds_avail -= 2,
-            BondType::Triple => bonds_avail -= 3,
-            BondType::Aromatic => {
-                ar_count += 1;
-                // bonds_avail -= 2
-            }
-            _ => bonds_avail -= 1,
-        }
+        result += match bond.bond_type {
+            BondType::Single => 2,
+            BondType::Double => 4,
+            BondType::Triple => 6,
+            BondType::Aromatic => 3,
+            _ => 2,
+        };
     }
 
-    // Special override for the non-integer case of Aromatic bonds (4 - 1.5 x 2 = 1)
-    if ar_count == 2 {
-        bonds_avail -= 3;
-    }
+    result
+}
 
-    if bonds_avail < 0 {
-        0
-    } else {
-        bonds_avail as usize
-    }
+/// How many more single bonds (in practice, Hydrogens) an atom can accept: its typical valence,
+/// less the bond order it already carries.
+///
+/// This assumes a neutral atom in its usual valence state. Charged centres -- an ammonium N, the
+/// terminal N of an azide, a carboxylate O -- don't follow it, so the molecule editor lets the
+/// user override the Hydrogen count directly rather than trying to infer a formal charge here.
+pub fn bonds_avail(i_atom: usize, mol: &MoleculeCommon, el: Element) -> usize {
+    use Element::*;
+
+    let order_x2 = bond_order_x2(i_atom, &mol.bonds);
+    // Round up: a fused-ring carbon carrying three aromatic bonds (order 4.5) is full, not
+    // short half a bond.
+    let order = (order_x2 + 1) / 2;
+
+    let valence: isize = match el {
+        Hydrogen => 1,
+        Carbon | Silicon => 4,
+        Nitrogen | Boron => 3,
+        Oxygen => 2,
+        Fluorine | Chlorine | Bromine | Iodine => 1,
+        // S and P routinely exceed their base valence (sulfoxides, sulfones, phosphates), so step
+        // up to the next state that accommodates the bonds already present.
+        Sulfur | Selenium | Tellurium => *[2, 4, 6].iter().find(|v| **v >= order).unwrap_or(&6),
+        Phosphorus => *[3, 5].iter().find(|v| **v >= order).unwrap_or(&5),
+        // Metals and anything else we don't model: leave alone rather than guess at Hydrogens.
+        _ => return 0,
+    };
+
+    (valence - order).max(0) as usize
 }
 
 /// Remove all hydrogens bonded to an atom.

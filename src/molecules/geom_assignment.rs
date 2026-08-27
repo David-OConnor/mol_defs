@@ -14,7 +14,7 @@ use na_seq::Element;
 
 use crate::molecules::{
     Atom, Bond,
-    common::{BondGeom, MoleculeCommon, find_appended_posit},
+    common::{BondGeom, MoleculeCommon, find_appended_posit, geom_for_atom},
 };
 
 // ── Public impl ───────────────────────────────────────────────────────────────
@@ -741,36 +741,6 @@ fn no_context_position(parent: Vec3, bond_len: f64, geom: BondGeom, n_placed: us
 }
 
 // ── Geometry helpers ──────────────────────────────────────────────────────────
-
-fn geom_for_atom(i: usize, bonds: &[Bond]) -> BondGeom {
-    let atom_bonds: Vec<&Bond> = bonds
-        .iter()
-        .filter(|b| b.atom_0 == i || b.atom_1 == i)
-        .collect();
-
-    if atom_bonds.iter().any(|b| b.bond_type == BondType::Triple) {
-        return BondGeom::Linear;
-    }
-
-    // Cumulated diene (allene-type, e.g. C=C=C): the central atom carries two
-    // double bonds and is sp-hybridised (linear), not sp2.
-    let double_count = atom_bonds
-        .iter()
-        .filter(|b| b.bond_type == BondType::Double)
-        .count();
-    if double_count >= 2 {
-        return BondGeom::Linear;
-    }
-
-    if atom_bonds
-        .iter()
-        .any(|b| matches!(b.bond_type, BondType::Double | BondType::Aromatic))
-    {
-        BondGeom::Planar
-    } else {
-        BondGeom::Tetrahedral
-    }
-}
 
 fn bond_type_between(a: usize, b: usize, bonds: &[Bond]) -> BondType {
     bonds

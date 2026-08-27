@@ -896,12 +896,6 @@ impl MoleculeSmall {
         }
 
         if let Some(char) = &mut self.characterization {
-            println!(
-                "LogP Calc:{:.1} | PubChem: {:.2} TPSA calc: {:.1} PubChem: {:.2}\n",
-                char.log_p, props.log_p, char.tpsa_ertl, props.total_polar_surface_area
-            );
-
-            // char.log_p_pubchem = Some(props.log_p);
             char.tpsa_ertl = props.total_polar_surface_area;
             char.volume_pubchem = Some(props.volume);
             char.complexity = Some(props.complexity);
