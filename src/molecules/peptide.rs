@@ -289,19 +289,44 @@ impl MoleculePeptide {
         //     result.alternate_conformations = Some(alternate_conformations);
         // }
 
-        println!("Populating protein hydrogens, dihedral angles, FF types and partial charges...");
         let start = Instant::now();
 
-        let (bonds_, dihedrals) = prepare_peptide_mmcif(&mut m, ff_map, ph).unwrap_or_else(|e| {
-            eprintln!("Error: Unable to prepare a mmCIF file. Maybe it's not a protein? {e:?}");
-            // Populate bonds directly in case of an error:
-            let bonds = create_bonds(&m.atoms);
-            (bonds, Vec::new())
+        let non_hetero_atom_sns: HashSet<u32> = m
+            .atoms
+            .iter()
+            .filter(|atom| !atom.hetero)
+            .map(|atom| atom.serial_number)
+            .collect();
+        let has_non_peptide_polymer = m.residues.iter().any(|residue| {
+            matches!(residue.res_type, ResidueType::Other(_))
+                && residue
+                    .atom_sns
+                    .iter()
+                    .any(|sn| non_hetero_atom_sns.contains(sn))
         });
+
+        let (bonds_, dihedrals) = if has_non_peptide_polymer {
+            println!("Inferring bonds for a mixed polymer structure...");
+            // Mixed polymer structures (for example, protein-DNA complexes) cannot be passed
+            // through peptide force-field preparation as a single peptide. Preserve every atom
+            // and the original complex geometry, and infer display bonds without peptide-only
+            // hydrogen, charge, or dihedral assignment.
+            (create_bonds(&m.atoms), Vec::new())
+        } else {
+            println!(
+                "Populating protein hydrogens, dihedral angles, FF types and partial charges..."
+            );
+            prepare_peptide_mmcif(&mut m, ff_map, ph).unwrap_or_else(|e| {
+                eprintln!("Error: Unable to prepare a mmCIF file. Maybe it's not a protein? {e:?}");
+                // Populate bonds directly in case of an error:
+                let bonds = create_bonds(&m.atoms);
+                (bonds, Vec::new())
+            })
+        };
 
         // todo: Speed this up?
         let end = start.elapsed().as_millis();
-        println!("Populated  protein hydrogens etc in {end:.1}ms");
+        println!("Prepared molecule topology in {end:.1}ms");
 
         let (atoms, bonds, residues, chains) = molecules::init_bonds_chains_res(
             &m.atoms,

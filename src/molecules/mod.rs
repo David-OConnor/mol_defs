@@ -801,7 +801,7 @@ fn init_bonds_chains_res(
     chains_: &[ChainGeneric],
     dihedrals: &[Dihedral],
 ) -> io::Result<(Vec<Atom>, Vec<Bond>, Vec<Residue>, Vec<Chain>)> {
-    println!("Initializing protein atoms, bonds residues, chains...");
+    println!("Initializing molecule atoms, bonds, residues, and chains...");
     let start = Instant::now();
 
     let mut atoms: Vec<_> = atoms_.iter().map(|a| a.into()).collect();
@@ -845,7 +845,7 @@ fn init_bonds_chains_res(
     }
 
     let len_matches = residues_.len() == dihedrals.len();
-    if !len_matches {
+    if !dihedrals.is_empty() && !len_matches {
         eprintln!(
             "Error: Diehedral, residue len mismatch. Dihedrals: {}, residues: {}",
             dihedrals.len(),
@@ -964,7 +964,7 @@ fn init_bonds_chains_res(
     }
 
     let elapsed = start.elapsed().as_millis();
-    println!("Populated protein residues etc in {elapsed} ms");
+    println!("Initialized molecule topology in {elapsed} ms");
 
     Ok((atoms, bonds, residues, chains))
 }
