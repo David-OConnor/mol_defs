@@ -28,8 +28,8 @@ use na_seq::Element;
 use crate::{
     mol_components::MolComponents,
     molecules::{
-        Atom, Bond, Chain, MolGeneric, MolGenericRef, MolIdent, PHARMACOPHORE_POCKET_ATOMS_KEY,
-        Residue,
+        Atom, Bond, Chain, MolGeneric, MolGenericRef, MolIdent, MolIdentType,
+        PHARMACOPHORE_POCKET_ATOMS_KEY, Residue,
         common::MoleculeCommon,
         conformers::{Conformer, characterize_conformations},
         pocket::Pocket,
@@ -37,7 +37,6 @@ use crate::{
     properties::{mol_characterization::MolCharacterization, therapeutic::TherapeuticProperties},
     screening::pharmacophore::{Pharmacophore, PharmacophoreFeature},
 };
-use crate::molecules::MolIdentType;
 
 /// A molecule representing a small organic molecule. Omits mol-generic fields.
 #[derive(Debug, Default, Clone)]
@@ -281,7 +280,7 @@ impl MoleculeSmall {
     pub fn get_ident(&self, ident_type: MolIdentType) -> Option<&MolIdent> {
         for ident in &self.idents {
             if ident.ident_type() == ident_type {
-                return Some(ident)
+                return Some(ident);
             }
         }
 
@@ -1269,4 +1268,3 @@ mod tests {
         assert!(idents_from_metadata("", &metadata).contains(&MolIdent::Hmdb(2111)));
     }
 }
-
