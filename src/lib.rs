@@ -28,6 +28,7 @@ macro_rules! copy_le {
 }
 
 pub mod bond_inference;
+pub mod mmcif_edit;
 pub mod mol_components;
 pub mod molecules;
 pub mod properties;

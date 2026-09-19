@@ -69,9 +69,9 @@ pub struct MoleculePeptide {
     pub atoms_filtered_to_disp: Option<Vec<usize>>,
     /// For color-coding based on SIFTS (From Uniprot/PDBe)
     pub sifts_mapping: Option<Vec<SiftsUniprotMapping>>,
-    /// Raw mmCIF text this peptide was built from, when it did not come from an on-disk file that is
-    /// already tracked in `State::cif_pdb_raw`. Structure predictions set this so their results can be
-    /// saved back out as mmCIF; molecules opened from a file leave it `None`.
+    /// The mmCIF text this peptide was built from, for saving it back out with everything we
+    /// don't parse intact. Adding, removing, and detaching ligands (see `peptide_ligands`) keep this
+    /// in sync with the peptide.
     pub source_cif: Option<String>,
 }
 
@@ -109,17 +109,21 @@ impl MoleculePeptide {
         // Override the one set in Common::new(), now that we've added hydrogens.
         result.common.build_adjacency_list();
 
-        for res in &result.residues {
-            if let ResidueType::Other(_) = &res.res_type
-                && res.atoms.len() >= 10
-            {
-                result.het_residues.push(res.clone());
-            }
-        }
+        result.update_het_residues();
 
         // Ideally, alternate conformations should go here, but we place them in from_mmcif
         // so they can be added prior to Hydrogens.
         result
+    }
+
+    /// Refresh `het_residues` from `residues`.
+    pub fn update_het_residues(&mut self) {
+        self.het_residues = self
+            .residues
+            .iter()
+            .filter(|r| matches!(r.res_type, ResidueType::Other(_)) && r.atoms.len() >= 10)
+            .cloned()
+            .collect();
     }
 
     /// If a residue, get the alpha C. If multiple, get an arbitrary one.

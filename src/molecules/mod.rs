@@ -10,6 +10,7 @@ mod geom_assignment;
 pub mod lipid;
 pub mod nucleic_acid;
 pub mod peptide;
+pub mod peptide_ligands;
 pub mod pocket;
 pub mod rotatable_bonds;
 pub mod small;

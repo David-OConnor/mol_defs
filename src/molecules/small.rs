@@ -32,6 +32,7 @@ use crate::{
         PHARMACOPHORE_POCKET_ATOMS_KEY, Residue,
         common::MoleculeCommon,
         conformers::{Conformer, characterize_conformations},
+        peptide_ligands::LigandCifOrigin,
         pocket::Pocket,
     },
     properties::{mol_characterization::MolCharacterization, therapeutic::TherapeuticProperties},
@@ -55,6 +56,9 @@ pub struct MoleculeSmall {
     pub pharmacophore: Pharmacophore,
     pub therapeutic_props: Option<TherapeuticProperties>,
     pub components: Option<MolComponents>,
+    /// Set if this was detached from a protein's mmCIF: the records describing it there, for
+    /// restoring when re-attaching it.
+    pub cif_origin: Option<LigandCifOrigin>,
 }
 
 /// Metadata keys used to persist molecule identifiers in formats that have no dedicated place for
