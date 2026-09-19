@@ -1995,11 +1995,25 @@ impl MoleculePeptide {
     /// a standalone molecule, in place. It carries its mmCIF records, so re-attaching it with
     /// [`Self::attach_ligand`] restores them.
     pub fn detach_het_residue(&mut self, res_i: usize) -> io::Result<MoleculeSmall> {
-        let res = self
+        self.detach_het_residue_with_fragments(res_i, true)
+    }
+
+    /// Detach the entire residue, optionally discarding all but its largest bonded component
+    /// from the returned ligand. Component size is ranked by heavy-atom count.
+    pub fn detach_het_residue_with_fragments(
+        &mut self,
+        res_i: usize,
+        include_disconnected: bool,
+    ) -> io::Result<MoleculeSmall> {
+        let mut res = self
             .residues
             .get(res_i)
             .cloned()
             .ok_or_else(|| invalid("Residue index out of range"))?;
+
+        if !include_disconnected {
+            res.atoms = self.common.largest_connected_component(&res.atoms);
+        }
 
         let mut result = MoleculeSmall::from_res(&res, &self.common.atoms, &self.common.bonds);
 

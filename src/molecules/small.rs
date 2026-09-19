@@ -644,6 +644,9 @@ impl MoleculeSmall {
         let mut result = Self::new(name.clone(), atoms_this, bonds_new, HashMap::new(), None);
 
         result.common.center_local_posits_around_origin();
+        // Hydrogen placement reads atom_posits, while editor loading reads atom.posit.
+        // Both must use the centered frame before any atoms are added.
+        result.common.reset_posits();
 
         result.idents.push(MolIdent::PdbeAmber(name));
 

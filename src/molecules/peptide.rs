@@ -430,6 +430,12 @@ impl MoleculePeptide {
         self.common.build_adjacency_list();
         self.common.reset_posits();
 
+        // Hydrogen reassignment infers bonds again; restore the source component topology.
+        if let Some(text) = &self.source_cif {
+            let doc = crate::mmcif_edit::CifDoc::new(text)?;
+            self.apply_component_bonds(&doc);
+        }
+
         let elapsed = start.elapsed().as_millis();
         let h_count = self
             .common

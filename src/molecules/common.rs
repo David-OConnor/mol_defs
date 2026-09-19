@@ -162,6 +162,51 @@ impl MoleculeCommon {
         self.adjacency_list = build_adjacency_list(&self.bonds, self.atoms.len());
     }
 
+    /// Largest bonded component within a selection, ranked by heavy atoms, then total atoms.
+    /// Ties keep the first component in selection order. Returned indices retain that order.
+    pub fn largest_connected_component(&self, indices: &[usize]) -> Vec<usize> {
+        let mut remaining = vec![false; self.atoms.len()];
+        for &i in indices {
+            remaining[i] = true;
+        }
+
+        let mut largest = Vec::new();
+        let mut best_score = (0, 0);
+        for &start in indices {
+            if !remaining[start] {
+                continue;
+            }
+
+            remaining[start] = false;
+            let mut stack = vec![start];
+            let mut component = Vec::new();
+            let mut heavy_count = 0;
+            while let Some(i) = stack.pop() {
+                component.push(i);
+                heavy_count += usize::from(self.atoms[i].element != Hydrogen);
+
+                for &neighbor in &self.adjacency_list[i] {
+                    if remaining[neighbor] {
+                        remaining[neighbor] = false;
+                        stack.push(neighbor);
+                    }
+                }
+            }
+
+            let score = (heavy_count, component.len());
+            if score > best_score {
+                best_score = score;
+                largest = component;
+            }
+        }
+
+        let mut keep = vec![false; self.atoms.len()];
+        for i in largest {
+            keep[i] = true;
+        }
+        indices.iter().copied().filter(|&i| keep[i]).collect()
+    }
+
     /// Reset atom positions to be at their internal values, e.g. as present in the Mol2 or SDF files.
     pub fn reset_posits(&mut self) {
         self.atom_posits = self.atoms.iter().map(|a| a.posit).collect();
