@@ -653,6 +653,26 @@ impl MoleculeSmall {
         result
     }
 
+    /// Build a standalone molecule from a subset of another one's atoms, e.g. one bonded fragment
+    /// of a molecule being split apart. Bonds with both ends in the subset come along; ones
+    /// crossing out of it are dropped.
+    ///
+    /// Atoms keep the positions they currently hold, so the fragment stays where it was. The
+    /// identifiers of the molecule it came from are not carried over: this is a different
+    /// molecule, so a CID or InChI from the parent would be wrong.
+    pub fn from_fragment(
+        ident: String,
+        common: &MoleculeCommon,
+        atom_indices: &[usize],
+    ) -> io::Result<Self> {
+        let sub = common.subset(atom_indices)?;
+
+        let mut result = Self::new(ident, sub.atoms, sub.bonds, HashMap::new(), None);
+        result.update_characterization();
+
+        Ok(result)
+    }
+
     pub fn apply_geostd_data(
         &mut self,
         data: GeostdData,

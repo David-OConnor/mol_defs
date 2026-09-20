@@ -3,8 +3,11 @@
 //!
 
 use std::{
+    cmp::Reverse,
     collections::HashMap,
     f64::consts::PI,
+    io,
+    io::ErrorKind,
     path::{Path, PathBuf},
 };
 
@@ -205,6 +208,202 @@ impl MoleculeCommon {
             keep[i] = true;
         }
         indices.iter().copied().filter(|&i| keep[i]).collect()
+    }
+
+    /// Group every atom into a bonded component: each returned `Vec` is one connected piece of
+    /// this molecule's graph. A molecule ingested as a single unit usually yields one component,
+    /// but salts, and selections carved out of a protein, may yield several.
+    ///
+    /// Ordered largest first, ranked by heavy atoms, then total atoms. Indices within a component
+    /// are ascending.
+    pub fn connected_components(&self) -> Vec<Vec<usize>> {
+        let mut result = components_of(&self.adjacency_list);
+        self.sort_components(&mut result);
+        result
+    }
+
+    /// The bonded components this molecule would break into if the bonds at `bond_indices` were
+    /// removed. Ordering matches [`Self::connected_components`], so the first entry is the piece
+    /// to keep when splitting a molecule in place.
+    ///
+    /// Errors unless every bond given is a place the molecule comes apart. A ring is the usual
+    /// cause: cutting one of its bonds leaves it joined the other way around, so splitting a ring
+    /// takes two cuts.
+    pub fn components_without_bonds(&self, bond_indices: &[usize]) -> io::Result<Vec<Vec<usize>>> {
+        if bond_indices.is_empty() {
+            return Err(invalid("No bonds were given to split at"));
+        }
+
+        let mut cut = vec![false; self.bonds.len()];
+        for &i in bond_indices {
+            if i >= self.bonds.len() {
+                return Err(invalid(format!("Bond index {i} is out of range")));
+            }
+            cut[i] = true;
+        }
+
+        // Rebuild from the surviving bonds rather than editing `adjacency_list`: that list stores
+        // only neighbor indices, so it can't tell which bond an entry came from if two bonds join
+        // the same pair of atoms.
+        let kept: Vec<Bond> = self
+            .bonds
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| !cut[*i])
+            .map(|(_, b)| b.clone())
+            .collect();
+
+        let mut result = components_of(&build_adjacency_list(&kept, self.atoms.len()));
+
+        let mut comp_of = vec![0; self.atoms.len()];
+        for (comp_i, component) in result.iter().enumerate() {
+            for &i in component {
+                comp_of[i] = comp_i;
+            }
+        }
+
+        // Every bond given must be a place the molecule comes apart. Checking them one at a time,
+        // rather than counting components, catches a mix of good and bad cuts, and names the one
+        // at fault. (Counting wouldn't work anyway for a molecule already in several pieces.)
+        for &i in bond_indices {
+            let bond = &self.bonds[i];
+            if comp_of[bond.atom_0] == comp_of[bond.atom_1] {
+                return Err(invalid(format!(
+                    "the bond between atoms {} and {} doesn't split the molecule: it's part of a \
+                    ring, so cutting it leaves the ring joined the other way around. Select every \
+                    bond that closes the ring, e.g. two of them",
+                    bond.atom_0_sn, bond.atom_1_sn
+                )));
+            }
+        }
+
+        self.sort_components(&mut result);
+        Ok(result)
+    }
+
+    /// Largest first, by heavy atoms, then total atoms. Ties keep their existing order.
+    fn sort_components(&self, components: &mut [Vec<usize>]) {
+        components.sort_by_key(|c| {
+            let heavy = c
+                .iter()
+                .filter(|&&i| self.atoms[i].element != Hydrogen)
+                .count();
+
+            (Reverse(heavy), Reverse(c.len()))
+        });
+    }
+
+    /// A standalone copy of the atoms at `atom_indices`, and of the bonds with both ends among
+    /// them. Serial numbers are re-assigned from 1, and each atom keeps its current (moved)
+    /// position, as both its internal position and in `atom_posits`.
+    ///
+    /// E.g. for pulling a fragment out of a molecule as its own molecule. Pass a component from
+    /// [`Self::components_without_bonds`] to keep that fragment whole.
+    pub fn subset(&self, atom_indices: &[usize]) -> io::Result<Self> {
+        if atom_indices.is_empty() {
+            return Err(invalid("No atoms were given to copy"));
+        }
+
+        // Old index -> (new index, new SN). Used to rebuild bonds.
+        let mut map = HashMap::with_capacity(atom_indices.len());
+        let mut atoms = Vec::with_capacity(atom_indices.len());
+
+        for (i_new, &i_old) in atom_indices.iter().enumerate() {
+            let atom = self
+                .atoms
+                .get(i_old)
+                .ok_or_else(|| invalid(format!("Atom index {i_old} is out of range")))?;
+
+            let sn = i_new as u32 + 1;
+            if map.insert(i_old, (i_new, sn)).is_some() {
+                return Err(invalid(format!("Atom index {i_old} was given twice")));
+            }
+
+            atoms.push(Atom {
+                serial_number: sn,
+                // The caller is pulling this fragment out where it sits; the parent's internal
+                // positions may be a different (e.g. pre-move) frame.
+                posit: self.atom_posits[i_old],
+                residue: None,
+                chain: None,
+                ..atom.clone()
+            });
+        }
+
+        let mut bonds = Vec::new();
+        for bond in &self.bonds {
+            let (Some(&(atom_0, atom_0_sn)), Some(&(atom_1, atom_1_sn))) =
+                (map.get(&bond.atom_0), map.get(&bond.atom_1))
+            else {
+                continue;
+            };
+
+            bonds.push(Bond {
+                bond_type: bond.bond_type,
+                atom_0_sn,
+                atom_1_sn,
+                atom_0,
+                atom_1,
+                is_backbone: false,
+            });
+        }
+
+        Ok(Self::new(
+            self.ident.clone(),
+            atoms,
+            bonds,
+            self.metadata.clone(),
+            None,
+        ))
+    }
+
+    /// Remove a set of atoms, and every bond to them, in one pass. Equivalent to repeated
+    /// [`Self::remove_atom`] calls, but re-indexes once instead of once per atom.
+    pub fn remove_atoms(&mut self, indices: &[usize]) {
+        let mut remove = vec![false; self.atoms.len()];
+        for &i in indices {
+            if i >= self.atoms.len() {
+                eprintln!("Error removing atoms: Index {i} out of range");
+                return;
+            }
+            remove[i] = true;
+        }
+
+        // Where each atom ends up once the removals are applied.
+        let mut i_new = Vec::with_capacity(self.atoms.len());
+        let mut kept = 0;
+        for i in 0..self.atoms.len() {
+            i_new.push(kept);
+            if !remove[i] {
+                kept += 1;
+            }
+        }
+
+        let mut i = 0;
+        self.atoms.retain(|_| {
+            let keep = !remove[i];
+            i += 1;
+            keep
+        });
+
+        let mut i = 0;
+        self.atom_posits.retain(|_| {
+            let keep = !remove[i];
+            i += 1;
+            keep
+        });
+
+        self.bonds.retain_mut(|bond| {
+            if remove[bond.atom_0] || remove[bond.atom_1] {
+                return false;
+            }
+
+            bond.atom_0 = i_new[bond.atom_0];
+            bond.atom_1 = i_new[bond.atom_1];
+            true
+        });
+
+        self.build_adjacency_list();
     }
 
     /// Reset atom positions to be at their internal values, e.g. as present in the Mol2 or SDF files.
@@ -982,5 +1181,153 @@ pub fn hydrogens_avail(ff_type: &Option<String>) -> Vec<(String, f64)> {
         "py" => vec![("hp".to_owned(), 1.4150)],
 
         _ => Vec::new(),
+    }
+}
+
+/// Flood-fill an adjacency list into its connected components; ascending index order within each.
+/// See [`MoleculeCommon::connected_components`].
+fn components_of(adj_list: &[Vec<usize>]) -> Vec<Vec<usize>> {
+    let mut visited = vec![false; adj_list.len()];
+    let mut result = Vec::new();
+
+    for start in 0..adj_list.len() {
+        if visited[start] {
+            continue;
+        }
+
+        visited[start] = true;
+        let mut stack = vec![start];
+        let mut component = Vec::new();
+
+        while let Some(i) = stack.pop() {
+            component.push(i);
+
+            for &neighbor in &adj_list[i] {
+                if !visited[neighbor] {
+                    visited[neighbor] = true;
+                    stack.push(neighbor);
+                }
+            }
+        }
+
+        component.sort_unstable();
+        result.push(component);
+    }
+
+    result
+}
+
+fn invalid(msg: impl Into<String>) -> io::Error {
+    io::Error::new(ErrorKind::InvalidData, msg.into())
+}
+
+#[cfg(test)]
+mod tests {
+    use bio_files::BondType;
+    use na_seq::Element;
+
+    use super::*;
+
+    /// A chain of carbons, bonded `atoms[i]`—`atoms[i + 1]`, plus any extra bonds given as
+    /// (atom, atom) pairs; e.g. `(0, 4)` closes the first five into a ring.
+    fn chain(len: usize, extra: &[(usize, usize)]) -> MoleculeCommon {
+        let atoms: Vec<_> = (0..len)
+            .map(|i| Atom {
+                serial_number: i as u32 + 1,
+                posit: Vec3::new(i as f64 * 1.5, 0., 0.),
+                element: Element::Carbon,
+                ..Default::default()
+            })
+            .collect();
+
+        let bonds = (0..len - 1)
+            .map(|i| (i, i + 1))
+            .chain(extra.iter().copied())
+            .map(|(atom_0, atom_1)| Bond {
+                bond_type: BondType::Single,
+                atom_0_sn: atom_0 as u32 + 1,
+                atom_1_sn: atom_1 as u32 + 1,
+                atom_0,
+                atom_1,
+                is_backbone: false,
+            })
+            .collect();
+
+        MoleculeCommon::new(String::from("TEST"), atoms, bonds, HashMap::new(), None)
+    }
+
+    #[test]
+    fn splits_a_chain_at_one_bond() {
+        // Cutting 2—3 of a 6-chain leaves 3 atoms on each side; an even split keeps them in
+        // their original order.
+        let components = chain(6, &[]).components_without_bonds(&[2]).unwrap();
+
+        assert_eq!(components, vec![vec![0, 1, 2], vec![3, 4, 5]]);
+    }
+
+    #[test]
+    fn rejects_a_single_ring_bond() {
+        // A ring of 5, with a 2-atom tail. Cutting one of the ring's bonds leaves it joined the
+        // other way around, so nothing comes apart.
+        assert!(chain(7, &[(0, 4)]).components_without_bonds(&[0]).is_err());
+
+        // Both of the ring's cuts: the ring opens, and the tail goes with one of the halves.
+        let components = chain(7, &[(0, 4)])
+            .components_without_bonds(&[0, 3])
+            .unwrap();
+        assert_eq!(components, vec![vec![0, 4, 5, 6], vec![1, 2, 3]]);
+    }
+
+    #[test]
+    fn rejects_a_ring_bond_mixed_with_a_good_cut() {
+        // Bond 5 (the tail) does split it; bond 0 (in the ring) doesn't. Counting components
+        // would miss this, since the count still goes up.
+        assert!(
+            chain(7, &[(0, 4)])
+                .components_without_bonds(&[0, 5])
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn keeps_existing_fragments_separate() {
+        // Two chains of 3 with no bond between them, so the molecule starts out in two pieces.
+        let mut mol = chain(6, &[]);
+        mol.bonds.remove(2);
+        mol.build_adjacency_list();
+
+        assert_eq!(mol.connected_components().len(), 2);
+
+        // Cutting 0—1 leaves three pieces, not two: the piece that was already separate stays so.
+        let components = mol.components_without_bonds(&[0]).unwrap();
+        assert_eq!(components, vec![vec![3, 4, 5], vec![1, 2], vec![0]]);
+    }
+
+    #[test]
+    fn subset_carries_bonds_and_moved_positions() {
+        let mut mol = chain(6, &[]);
+        mol.shift(Vec3::new(0., 10., 0.));
+
+        let sub = mol.subset(&[3, 4, 5]).unwrap();
+
+        assert_eq!(sub.atoms.len(), 3);
+        // The two bonds within the subset come along; 2—3, which leaves it, does not.
+        assert_eq!(sub.bonds.len(), 2);
+        assert_eq!(sub.atoms[0].serial_number, 1);
+        assert_eq!(sub.bonds[0].atom_0_sn, 1);
+        assert_eq!(sub.atoms[0].posit, mol.atom_posits[3]);
+        assert_eq!(sub.atom_posits[0], mol.atom_posits[3]);
+    }
+
+    #[test]
+    fn remove_atoms_reindexes_bonds() {
+        let mut mol = chain(6, &[]);
+        mol.remove_atoms(&[0, 1, 2]);
+
+        assert_eq!(mol.atoms.len(), 3);
+        assert_eq!(mol.atom_posits.len(), 3);
+        assert_eq!(mol.bonds.len(), 2);
+        assert_eq!((mol.bonds[0].atom_0, mol.bonds[0].atom_1), (0, 1));
+        assert_eq!(mol.adjacency_list, vec![vec![1], vec![0, 2], vec![1]]);
     }
 }
