@@ -1,14 +1,12 @@
-// todo: You may be nissing, on G, the H on H1 (WOuld be H1)
-
-//! For setting up and rendering nucleic acids: DNA and RNA. This module loads atom positions
-//! for each base from Amber templates, and positions atoms to be geometrically consistent,
-//! and realistic.
+//! For setting up and rendering nucleic acids: DNA and RNA. DNA uses a connected
+//! canonical B-form repeat with Amber topology and hydrogen geometry. RNA uses
+//! rigid-template placement.
 //!
 //! Ref pic: https://upload.wikimedia.org/wikipedia/commons/4/4c/DNA_Structure%2BKey%2BLabelled.pn_NoBB.png
 //!
-// todo: Load Amber FF params for nucleic acids.
-
 use std::{collections::HashMap, f64::consts::TAU, fmt::Display, io};
+
+mod dna;
 
 use bincode::{Decode, Encode};
 use bio_files::{
@@ -546,13 +544,13 @@ fn build_strands(
 }
 
 impl MoleculeNucleicAcid {
-    /// Build a simple single-strand helix with a phosphate (P), sugar anchor (C4′ proxy),
-    /// and a base anchor (N9 for purines, N1 for pyrimidines). Bonds:
-    ///   P—S (intra), S—B (intra), and the inter-residue backbone S(i-1)—P(i).
-    ///
-    /// Geometry is **idealized B-DNA-like**: rise ~3.4 Å, twist 36°, with simple radial offsets.
-    /// This is a minimal “it renders now” model you can extend with full atom templates later.
-    /// Initializes a linear molecule.
+    /// Build an all-atom, hydroxyl-terminated DNA strand or antiparallel duplex.
+    /// DNA uses canonical Arnott B-form geometry (3.38 Å rise, 36° twist).
+    /// The input is 5′→3′; duplex residues contain that strand followed by its
+    /// reverse complement, also in 5′→3′ order. A single strand has exactly the
+    /// same coordinates as the first strand of the duplex.
+    /// This is an idealized starting structure, not an equilibrated conformation.
+    /// RNA uses rigid-template placement.
     pub fn from_seq(
         seq: &[Nucleotide],
         na_type: NucleicAcidType,
@@ -565,7 +563,10 @@ impl MoleculeNucleicAcid {
             NucleicAcidType::Rna => templates_rna,
         };
 
-        let (atoms, bonds, residues) = build_strands(seq, na_type, templates, strands)?;
+        let (atoms, bonds, residues) = match na_type {
+            NucleicAcidType::Dna => dna::build(seq, templates, strands)?,
+            NucleicAcidType::Rna => build_strands(seq, na_type, templates, strands)?,
+        };
 
         let mut metadata = HashMap::new();
         metadata.insert(
