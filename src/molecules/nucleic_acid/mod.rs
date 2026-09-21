@@ -6,6 +6,7 @@
 //!
 use std::{collections::HashMap, f64::consts::TAU, fmt::Display, io};
 
+mod b_dna_coordinates;
 mod dna;
 
 use bincode::{Decode, Encode};

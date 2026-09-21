@@ -2,10 +2,7 @@
 //! heavy-atom coordinates and Amber residue templates. Templates supply topology,
 //! force-field properties and local hydrogen geometry.
 
-use super::*;
-
-#[path = "b_dna_coordinates.rs"]
-mod coordinates;
+use super::{b_dna_coordinates as coordinates, *};
 
 const RISE: f64 = 3.38;
 const TWIST: f64 = 36.0_f64.to_radians();
