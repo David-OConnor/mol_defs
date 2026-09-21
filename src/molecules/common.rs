@@ -59,6 +59,10 @@ pub struct MoleculeCommon {
     pub copy_for_md: Option<usize>,
     /// A cache
     pub next_atom_sn: u32,
+    /// The coordinates are a flat 2D depiction, e.g. PubChem's fallback for a compound with no
+    /// 3D conformer. Set once on load from `posits_are_2d`, so the UI needn't reassess it; cleared
+    /// by `make_3d`.
+    pub is_2d: bool,
 }
 
 impl Default for MoleculeCommon {
@@ -78,6 +82,7 @@ impl Default for MoleculeCommon {
             entity_i_range: None,
             copy_for_md: None,
             next_atom_sn: 1,
+            is_2d: false,
             // md_snapshot_range: None,
         }
     }
@@ -404,6 +409,18 @@ impl MoleculeCommon {
         });
 
         self.build_adjacency_list();
+    }
+
+    /// If every atom's internal position has Z = 0, as in a 2D depiction. SDF and Mol2 files
+    /// write 4 decimal places, so a real Z offset of any size clears the threshold.
+    ///
+    /// Note that a planar 3D structure, e.g. CO2, can pass this if it lies in the XY plane.
+    /// Run this before adding hydrogens: they're placed with 3D geometry, even around flat atoms.
+    pub fn posits_are_2d(&self) -> bool {
+        const Z_MAX: f64 = 1e-5;
+
+        // One or two atoms have no 3D geometry to build.
+        self.atoms.len() >= 3 && self.atoms.iter().all(|a| a.posit.z.abs() < Z_MAX)
     }
 
     /// Reset atom positions to be at their internal values, e.g. as present in the Mol2 or SDF files.

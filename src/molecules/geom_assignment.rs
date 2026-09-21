@@ -752,7 +752,7 @@ fn bond_type_between(a: usize, b: usize, bonds: &[Bond]) -> BondType {
         .unwrap_or(BondType::Single)
 }
 
-fn estimate_bond_length(el0: Element, el1: Element, bt: BondType) -> f64 {
+pub(super) fn estimate_bond_length(el0: Element, el1: Element, bt: BondType) -> f64 {
     let r0 = el0.covalent_radius().max(0.5);
     let r1 = el1.covalent_radius().max(0.5);
     let base = r0 + r1;

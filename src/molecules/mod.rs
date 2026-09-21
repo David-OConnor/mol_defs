@@ -6,6 +6,7 @@
 /// These are core to the operation of this application.
 pub mod common;
 pub mod conformers;
+mod embed_3d;
 mod geom_assignment;
 pub mod lipid;
 pub mod nucleic_acid;
