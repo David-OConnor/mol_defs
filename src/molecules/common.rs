@@ -3,6 +3,7 @@
 //!
 
 use std::{
+    borrow::Cow,
     cmp::Reverse,
     collections::HashMap,
     f64::consts::PI,
@@ -30,7 +31,11 @@ pub enum BondGeom {
 /// Contains fields shared by all molecule types.
 #[derive(Debug, Clone)]
 pub struct MoleculeCommon {
+    /// Note: This may have overlap with `MoleculeSmall::Ident` depending on
+    /// how it's used.
     pub ident: String,
+    /// A user settable name which defaults to None.
+    pub name: Option<String>,
     pub atoms: Vec<Atom>,
     pub bonds: Vec<Bond>,
     /// A fast lookup for finding atoms, by index, covalently bonded to each atom.
@@ -70,6 +75,7 @@ impl Default for MoleculeCommon {
     fn default() -> Self {
         Self {
             ident: String::new(),
+            name: None,
             metadata: HashMap::new(),
             atoms: Vec::new(),
             bonds: Vec::new(),
@@ -598,11 +604,14 @@ impl MoleculeCommon {
         "built-in-",
     ];
 
-    /// Uses the `ident` field and filename (if different) from this struct. Uses the PubChem
-    /// title as well, if available for small molecules. This text description may prove more
-    /// useful for reading than just a CID. The filename may alternatively provide this
-    /// text description.
-    pub fn name(&self, idents: Option<&Vec<MolIdent>>) -> String {
+    /// Uses the custom name when set. Otherwise combines `ident` with the PubChem title,
+    /// when available, and a distinct filename. The title or filename can provide a more
+    /// useful description than a CID alone.
+    pub fn name(&self, idents: Option<&Vec<MolIdent>>) -> Cow<'_, str> {
+        if let Some(name) = self.name.as_deref() {
+            return Cow::Borrowed(name);
+        }
+
         let mut result = self.ident.to_string();
 
         if let Some(idents_) = idents {
@@ -641,7 +650,7 @@ impl MoleculeCommon {
             result.push_str(&format!(" | {truncated}"));
         }
 
-        result
+        Cow::Owned(result)
     }
 
     /// A helper used to ensure that there is a valid atom for each bond. (Checks both SN and index),

@@ -187,14 +187,18 @@ impl<'a> MolGenericRef<'a> {
         }
     }
 
-    /// A wrapper around `mol.common.name` for molecule types with multiple identifiers available;
-    /// if one identifier is available, use that.;
-    /// Cow to avoid a double borrow to get m.idents and m.common at the same time.
+    /// Uses the custom name when set, then the existing molecule-type label fallback.
+    /// Cow borrows the custom name or single identifier without allocating.
     pub fn name(&self) -> Cow<'_, str> {
         use MolGenericRef::*;
+
+        if let Some(name) = self.common().name.as_deref() {
+            return Cow::Borrowed(name);
+        }
+
         match self {
             Peptide(m) => Cow::Borrowed(&m.common.ident),
-            Small(m) => Cow::Owned(m.common.name(Some(&m.idents))),
+            Small(m) => m.common.name(Some(&m.idents)),
             NucleicAcid(m) => Cow::Borrowed(&m.common.ident),
             Lipid(m) => Cow::Borrowed(&m.common.ident),
             Pocket(m) => Cow::Borrowed(&m.common.ident),
