@@ -26,7 +26,9 @@ use na_seq::{AminoAcid, Element};
 use crate::{
     bond_inference::create_hydrogen_bonds_single_mol,
     molecules,
-    molecules::{Atom, AtomRole, Bond, Chain, HydrogenBond, Residue, common::MoleculeCommon},
+    molecules::{
+        Atom, AtomRole, Bond, Chain, HydrogenBond, PeptideIdent, Residue, common::MoleculeCommon,
+    },
     reflection::{DensityPt, DensityRect, ReflectionsData},
     util::mol_center_size,
 };
@@ -35,6 +37,7 @@ use crate::{
 #[derive(Debug, Default, Clone)]
 pub struct MoleculePeptide {
     pub common: MoleculeCommon,
+    pub idents: Vec<PeptideIdent>,
     pub bonds_hydrogen: Vec<HydrogenBond>,
     pub chains: Vec<Chain>,
     pub residues: Vec<Residue>,
@@ -73,6 +76,120 @@ pub struct MoleculePeptide {
     /// don't parse intact. Adding, removing, and detaching ligands (see `peptide_ligands`) keep this
     /// in sync with the peptide.
     pub source_cif: Option<String>,
+}
+
+/// The extended, 12-character form of a PDB ID, e.g. `1CRN` -> `"pdb_00001crn"`. Accepts either
+/// form. `None` if this isn't a PDB ID.
+pub fn pdb_id_extended(id: &str) -> Option<String> {
+    let id = id.trim().to_ascii_lowercase();
+
+    // Legacy IDs start with a nonzero digit.
+    let legacy = |v: &str| {
+        v.len() == 4
+            && v.starts_with(|c: char| matches!(c, '1'..='9'))
+            && v.chars().all(|c| c.is_ascii_alphanumeric())
+    };
+
+    if legacy(&id) {
+        return Some(format!("pdb_0000{id}"));
+    }
+
+    let body = id.strip_prefix("pdb_")?;
+    (body.len() == 8 && body.chars().all(|c| c.is_ascii_alphanumeric())).then_some(id)
+}
+
+/// The legacy, 4-character form of a PDB ID, e.g. `pdb_00001crn` -> `"1crn"`. Accepts either
+/// form. `None` if this isn't a PDB ID, or is an extended one with no legacy form.
+pub fn pdb_id_legacy(id: &str) -> Option<String> {
+    pdb_id_extended(id)?
+        .strip_prefix("pdb_0000")
+        .filter(|v| !v.starts_with('0'))
+        .map(str::to_owned)
+}
+
+fn push_ident(idents: &mut Vec<PeptideIdent>, ident: PeptideIdent) {
+    if !idents.contains(&ident) {
+        idents.push(ident);
+    }
+}
+
+/// Add the RCSB ident for a PDB ID, in its extended form, and PDBe's, which is the same entry.
+/// PDBe keys on the legacy form where there is one. Does nothing if this isn't a PDB ID.
+fn push_pdb_idents(idents: &mut Vec<PeptideIdent>, id: &str) {
+    let Some(extended) = pdb_id_extended(id) else {
+        return;
+    };
+    let pdbe = pdb_id_legacy(&extended).unwrap_or_else(|| extended.clone());
+
+    push_ident(idents, PeptideIdent::Rcsb(extended));
+    push_ident(idents, PeptideIdent::Pdbe(pdbe));
+}
+
+/// Identifiers from an mmCIF's cross-references: its own IDs (`_database_2`), related entries
+/// (`_pdbx_database_related`), and its entities' sequences (`_struct_ref`). If none identify the
+/// entry itself, falls back to its entry ID. PDB IDs are converted to their extended form.
+pub fn idents_from_mmcif(m: &MmCif) -> Vec<PeptideIdent> {
+    let mut result = Vec::new();
+
+    for id in &m.database_ids {
+        match id.database.to_ascii_uppercase().as_str() {
+            // The code is the legacy PDB ID, and the accession, where present, the extended one.
+            "PDB" => {
+                push_pdb_idents(&mut result, &id.code);
+                if let Some(accession) = &id.accession {
+                    push_pdb_idents(&mut result, accession);
+                }
+            }
+            "EMDB" => push_ident(&mut result, PeptideIdent::Emdb(id.code.clone())),
+            "BMRB" => push_ident(&mut result, PeptideIdent::Bmrb(id.code.clone())),
+            "ALPHAFOLDDB" => push_ident(&mut result, PeptideIdent::AlphaFoldDb(id.code.clone())),
+            _ => (),
+        }
+    }
+
+    // Older entries list their EMDB map and BMRB data here instead of in `_database_2`.
+    for entry in &m.related_entries {
+        match entry.db_name.to_ascii_uppercase().as_str() {
+            // Not e.g. `other EM volume`: maps of other states, which this model isn't built into.
+            "EMDB"
+                if entry
+                    .content_type
+                    .as_deref()
+                    .is_some_and(|c| c.eq_ignore_ascii_case("associated EM volume")) =>
+            {
+                push_ident(&mut result, PeptideIdent::Emdb(entry.db_id.clone()))
+            }
+            "BMRB" => push_ident(&mut result, PeptideIdent::Bmrb(entry.db_id.clone())),
+            _ => (),
+        }
+    }
+
+    for struct_ref in &m.struct_refs {
+        if let Some(accession) = &struct_ref.accession
+            && matches!(
+                struct_ref.db_name.to_ascii_uppercase().as_str(),
+                "UNP" | "UNIPROT" | "UNIPROTKB"
+            )
+        {
+            push_ident(&mut result, PeptideIdent::Uniprot(accession.clone()));
+        }
+    }
+
+    let has_entry_id = result
+        .iter()
+        .any(|i| matches!(i, PeptideIdent::Rcsb(_) | PeptideIdent::AlphaFoldDb(_)));
+
+    if !has_entry_id {
+        let entry_id = m.ident.trim();
+
+        if entry_id.starts_with("AF-") {
+            push_ident(&mut result, PeptideIdent::AlphaFoldDb(entry_id.to_owned()));
+        } else {
+            push_pdb_idents(&mut result, entry_id);
+        }
+    }
+
+    result
 }
 
 impl MoleculePeptide {
@@ -340,6 +457,8 @@ impl MoleculePeptide {
             &dihedrals,
         )?;
 
+        let idents = idents_from_mmcif(&m);
+
         let mut result = Self::new(
             m.ident.clone(),
             atoms,
@@ -350,6 +469,7 @@ impl MoleculePeptide {
             path,
         );
 
+        result.idents = idents;
         result.experimental_method = m.experimental_method;
         result.secondary_structure = m.secondary_structure.clone();
 
@@ -447,5 +567,148 @@ impl MoleculePeptide {
         println!("{h_count} Hydrogens populated in {elapsed:.1} ms");
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pdb_ids_convert_between_forms() {
+        assert_eq!(pdb_id_extended("1CRN").as_deref(), Some("pdb_00001crn"));
+        assert_eq!(
+            pdb_id_extended(" pdb_00001CRN").as_deref(),
+            Some("pdb_00001crn")
+        );
+        assert_eq!(
+            pdb_id_extended("pdb_10000abc").as_deref(),
+            Some("pdb_10000abc")
+        );
+        assert_eq!(pdb_id_extended("0ABC"), None);
+        assert_eq!(pdb_id_extended("CRN"), None);
+        assert_eq!(pdb_id_extended("AF-P69905-F1"), None);
+
+        assert_eq!(pdb_id_legacy("pdb_00001crn").as_deref(), Some("1crn"));
+        assert_eq!(pdb_id_legacy("1CRN").as_deref(), Some("1crn"));
+        assert_eq!(pdb_id_legacy("pdb_10000abc"), None);
+    }
+
+    /// As the RCSB writes them: loops, with text fields, for an entry with several entities.
+    /// Abridged from 6GO7, with 6VSB's EMDB rows.
+    #[test]
+    fn idents_from_rcsb_cif() {
+        let text = "data_6GO7
+_entry.id   6GO7
+#
+loop_
+_database_2.database_id
+_database_2.database_code
+_database_2.pdbx_database_accession
+_database_2.pdbx_DOI
+PDB   6GO7         pdb_00006go7 10.2210/pdb6go7/pdb
+WWPDB D_1200010309 ?            ?
+EMDB  EMD-21375    ?            ?
+#
+loop_
+_pdbx_database_related.db_name
+_pdbx_database_related.details
+_pdbx_database_related.db_id
+_pdbx_database_related.content_type
+EMDB 'Prefusion spike, one RBD up' EMD-21375 'associated EM volume'
+EMDB .                             EMD-21374 'other EM volume'
+#
+loop_
+_struct_ref.id
+_struct_ref.db_name
+_struct_ref.db_code
+_struct_ref.pdbx_db_accession
+_struct_ref.pdbx_db_isoform
+_struct_ref.entity_id
+_struct_ref.pdbx_seq_one_letter_code
+_struct_ref.pdbx_align_begin
+1 UNP TDT_MOUSE   P09838 ?        1
+;SPSPVPGSQNVPAPAVKKISQYACQRRTTLNNYNQLFTDALDILAENDELRENEGSCLAFMRASSVLKSLPFPITSMKDT
+QGLLLY
+;
+132
+2 UNP DPOLM_MOUSE Q9JIW4 ?        1 HQYHRSHLADSAHNLRQRSSTMDAFERSFC 363
+3 UNP TDT_MOUSE   P09838 P09838-2 1
+;ILKLDHGRVHSEKSGQQEGKGWKAIRVDLVMCPYDRRAFALLGWTGSRQFERDLRRYATHERKMMLDNHALYDRTKRVFL
+;
+407
+4 PDB 6GO7        6GO7   ?        2 ? 1
+#
+";
+        let idents = idents_from_mmcif(&MmCif::new(text).unwrap());
+
+        assert_eq!(
+            idents,
+            vec![
+                PeptideIdent::Rcsb("pdb_00006go7".to_owned()),
+                PeptideIdent::Pdbe("6go7".to_owned()),
+                PeptideIdent::Emdb("EMD-21375".to_owned()),
+                PeptideIdent::Uniprot("P09838".to_owned()),
+                PeptideIdent::Uniprot("Q9JIW4".to_owned()),
+            ]
+        );
+    }
+
+    /// As AlphaFold DB writes them: key-value items, with its own database name.
+    #[test]
+    fn idents_from_alphafold_cif() {
+        let text = "data_AF-P69905-F1
+#
+_entry.id AF-P69905-F1
+#
+_database_2.database_code AF-P69905-F1
+_database_2.database_id   AlphaFoldDB
+#
+_struct_ref.db_code                  HBA_HUMAN
+_struct_ref.db_name                  UNP
+_struct_ref.pdbx_db_accession        P69905
+_struct_ref.pdbx_db_isoform          ?
+_struct_ref.pdbx_seq_one_letter_code
+;MVLSPADKTNVKAAWGKVGAHAGEYGAEALERMFLSFPTTKTYFPHFDLSHGSAQVKGHGKKVADALTNAVAHVDDMPNA
+LSALSDLHAHKLRVDPVNFKLLSHCLLVTLAAHLPAEFTPAVHASLDKFLASVSTVLTSKYR
+;
+#
+";
+        assert_eq!(
+            idents_from_mmcif(&MmCif::new(text).unwrap()),
+            vec![
+                PeptideIdent::AlphaFoldDb("AF-P69905-F1".to_owned()),
+                PeptideIdent::Uniprot("P69905".to_owned()),
+            ]
+        );
+    }
+
+    /// An older NMR entry, with its BMRB data only listed as related, and identified by its entry
+    /// ID alone; and an mmCIF with no identifiers.
+    #[test]
+    fn idents_from_related_entries_and_entry_id() {
+        let text = "data_2K39
+_entry.id   2K39
+#
+_pdbx_database_related.db_name        BMRB
+_pdbx_database_related.db_id          15772
+_pdbx_database_related.content_type   unspecified
+_pdbx_database_related.details        .
+#
+";
+        assert_eq!(
+            idents_from_mmcif(&MmCif::new(text).unwrap()),
+            vec![
+                PeptideIdent::Bmrb("15772".to_owned()),
+                PeptideIdent::Rcsb("pdb_00002k39".to_owned()),
+                PeptideIdent::Pdbe("2k39".to_owned()),
+            ]
+        );
+
+        let unidentified = MmCif {
+            ident: "MD run".to_owned(),
+            ..Default::default()
+        };
+        assert!(idents_from_mmcif(&unidentified).is_empty());
     }
 }

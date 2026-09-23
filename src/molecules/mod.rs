@@ -1096,3 +1096,89 @@ impl Display for MolIdent {
         write!(f, "{v}")
     }
 }
+
+/// For polypeptides, e.g. proteins. Unlike [`PeptideIdent`], does not encode the indenfier itself.
+/// Variants here map 1:1 with `PeptideIdent`.
+#[derive(Clone, PartialEq, Eq, Hash, Debug, Decode, Encode)]
+pub enum PeptideIdentType {
+    /// The newer, 12-char identifier. Older 4-char idents are coerced into the
+    /// newer format.
+    Rcsb,
+    /// I believe in many cases this may be the same as RCSB's.
+    Pdbe,
+    Uniprot,
+    AlphaFoldDb,
+    /// Electron Microscopy Data Bank: cryo-EM maps.
+    Emdb,
+    /// Biological Magnetic Resonance Data Bank: NMR data.
+    Bmrb,
+}
+
+impl Display for PeptideIdentType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let v = match self {
+            Self::Rcsb => "RCSB PDB",
+            Self::Pdbe => "PDBe",
+            Self::Uniprot => "UniProt",
+            Self::AlphaFoldDb => "AlphaFold Protein Structure",
+            Self::Emdb => "EMDB",
+            Self::Bmrb => "BMRB",
+        };
+
+        write!(f, "{v}")
+    }
+}
+
+/// For polypeptides, e.g. proteins.
+#[derive(Clone, PartialEq, Eq, Hash, Debug, Decode, Encode)]
+pub enum PeptideIdent {
+    /// Always 12 chars
+    Rcsb(String),
+    Pdbe(String),
+    Uniprot(String),
+    AlphaFoldDb(String),
+    /// E.g. `EMD-21375`.
+    Emdb(String),
+    Bmrb(String),
+}
+
+impl PeptideIdent {
+    /// Useful for some APIs, for example.
+    pub fn ident_inner(&self) -> String {
+        match self {
+            Self::Rcsb(v) => v.clone(),
+            Self::Pdbe(v) => v.clone(),
+            Self::Uniprot(v) => v.clone(),
+            Self::AlphaFoldDb(v) => v.clone(),
+            Self::Emdb(v) => v.clone(),
+            Self::Bmrb(v) => v.clone(),
+        }
+    }
+
+    pub fn ident_type(&self) -> PeptideIdentType {
+        match self {
+            Self::Rcsb(_) => PeptideIdentType::Rcsb,
+            Self::Pdbe(_) => PeptideIdentType::Pdbe,
+            Self::Uniprot(_) => PeptideIdentType::Uniprot,
+            Self::AlphaFoldDb(_) => PeptideIdentType::AlphaFoldDb,
+            Self::Emdb(_) => PeptideIdentType::Emdb,
+            Self::Bmrb(_) => PeptideIdentType::Bmrb,
+        }
+    }
+}
+
+impl Display for PeptideIdent {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let v = match self {
+            Self::Rcsb(ident) => format!("RCSB PDB: {ident}"),
+            Self::Pdbe(ident) => format!("PDBe: {ident}"),
+            Self::Uniprot(ident) => format!("UniProt: {ident}"),
+            Self::AlphaFoldDb(ident) => format!("AlphaFold DB: {ident}"),
+            // EMDB's accessions carry their own `EMD-` prefix.
+            Self::Emdb(ident) => ident.clone(),
+            Self::Bmrb(ident) => format!("BMRB: {ident}"),
+        };
+
+        write!(f, "{v}")
+    }
+}
