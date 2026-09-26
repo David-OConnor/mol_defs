@@ -890,15 +890,29 @@ fn init_bonds_chains_res(
         residues.push(r);
     }
 
-    // Build SN → residue-index map for O(1) chain construction.
-    let sn_to_res: HashMap<u32, usize> = residues
-        .iter()
-        .enumerate()
-        .map(|(i, r)| (r.serial_number, i))
-        .collect();
+    // Atom SN → chain index. Chains are built below in the same order as `chains_`.
+    let mut atom_sn_to_chain: HashMap<u32, usize> = HashMap::new();
+    for (chain_i, chain) in chains_.iter().enumerate() {
+        for &sn in &chain.atom_sns {
+            atom_sn_to_chain.insert(sn, chain_i);
+        }
+    }
+
+    // Build (chain, SN) → residue-index maps for O(1) chain construction. Residue serial numbers
+    // are only unique within a chain, so keying by SN alone would give every chain the residues
+    // of the last chain sharing its numbering. A residue's chain is that of its first atom. On
+    // duplicates, e.g. insertion codes, the first residue wins, as with a linear scan.
+    let mut chain_sn_to_res: HashMap<(usize, u32), usize> = HashMap::new();
+    let mut sn_to_res: HashMap<u32, usize> = HashMap::new();
+    for (i, res) in residues.iter().enumerate() {
+        if let Some(&chain_i) = res.atom_sns.first().and_then(|sn| atom_sn_to_chain.get(sn)) {
+            chain_sn_to_res.entry((chain_i, res.serial_number)).or_insert(i);
+        }
+        sn_to_res.entry(res.serial_number).or_insert(i);
+    }
 
     let mut chains = Vec::with_capacity(chains_.len());
-    for chain in chains_ {
+    for (chain_i, chain) in chains_.iter().enumerate() {
         let atom_indices: io::Result<Vec<usize>> = chain
             .atom_sns
             .iter()
@@ -918,12 +932,17 @@ fn init_bonds_chains_res(
                 .residue_sns
                 .iter()
                 .map(|sn| {
-                    sn_to_res.get(sn).copied().ok_or_else(|| {
-                        io::Error::new(
-                            ErrorKind::InvalidData,
-                            "Unable to find res SN when loading from generic chain",
-                        )
-                    })
+                    // Falls back to SN alone for a residue whose atoms aren't in any chain.
+                    chain_sn_to_res
+                        .get(&(chain_i, *sn))
+                        .or_else(|| sn_to_res.get(sn))
+                        .copied()
+                        .ok_or_else(|| {
+                            io::Error::new(
+                                ErrorKind::InvalidData,
+                                "Unable to find res SN when loading from generic chain",
+                            )
+                        })
                 })
                 .collect()
         };
@@ -937,18 +956,12 @@ fn init_bonds_chains_res(
         });
     }
 
-    // Build reverse maps: atom SN → residue index, and atom SN → chain index.
+    // Build reverse maps: atom SN → residue index (and atom SN → chain index, above).
     // Replaces the previous O(atoms × residues) and O(atoms × chains) nested loops.
     let mut atom_sn_to_res: HashMap<u32, usize> = HashMap::new();
     for (res_i, res) in residues.iter().enumerate() {
         for &sn in &res.atom_sns {
             atom_sn_to_res.insert(sn, res_i);
-        }
-    }
-    let mut atom_sn_to_chain: HashMap<u32, usize> = HashMap::new();
-    for (chain_i, chain) in chains.iter().enumerate() {
-        for &sn in &chain.atom_sns {
-            atom_sn_to_chain.insert(sn, chain_i);
         }
     }
 
