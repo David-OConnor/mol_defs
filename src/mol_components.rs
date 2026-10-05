@@ -41,6 +41,9 @@ pub enum ComponentType {
     Hydroxyl,
     Carbonyl,
     Carboxylate,
+    /// CH3-C(=O)-; carbonyl carbon first, then its oxygen, then the methyl carbon and its
+    /// three hydrogens.
+    Acetyl,
     Amine,
     Amide,
     Sulfonamide,
@@ -58,6 +61,7 @@ impl Display for ComponentType {
             Hydroxyl => "Hydroxyl".to_string(),
             Carbonyl => "Carbonyl".to_string(),
             Carboxylate => "Carboxylate".to_string(),
+            Acetyl => "Acetyl".to_string(),
             Amine => "Amine".to_string(),
             Amide => "Amide".to_string(),
             Sulfonamide => "Sulfonamide".to_string(),
@@ -146,6 +150,25 @@ impl ComponentType {
                 ],
             ),
 
+            // C(0) =O(1), C(0)–C(2), C(2)–H(3), C(2)–H(4), C(2)–H(5)
+            ComponentType::Acetyl => (
+                vec![
+                    a(Carbon),
+                    a(Oxygen),
+                    a(Carbon),
+                    a(Hydrogen),
+                    a(Hydrogen),
+                    a(Hydrogen),
+                ],
+                vec![
+                    b(0, 1, BondType::Double), // C=O
+                    b(0, 2, BondType::Single), // C-CH3
+                    b(2, 3, BondType::Single), // C-H
+                    b(2, 4, BondType::Single), // C-H
+                    b(2, 5, BondType::Single), // C-H
+                ],
+            ),
+
             // N(0)–H(1), N(0)–H(2)  (primary amine; lone Hs that were captured)
             ComponentType::Amine => (
                 vec![a(Nitrogen), a(Hydrogen), a(Hydrogen)],
@@ -187,7 +210,7 @@ impl ComponentType {
 ///
 /// `atoms` holds indices into the parent molecule's atom array.  The key (junction-capable)
 /// atom is always stored first: O for Hydroxyl, N for Amine/Amide/Sulfonamide/Sulfonimide,
-/// C for Carbonyl/Carboxylate/Chain/Methyl.
+/// C for Carbonyl/Carboxylate/Acetyl/Chain/Methyl.
 #[derive(Clone, Debug)]
 pub struct Component {
     pub comp_type: ComponentType,
@@ -230,12 +253,13 @@ impl MolComponents {
     ///   3. Sulfonimides
     ///   4. Sulfonamides
     ///   5. Amides
-    ///   6. Carbonyls (C=O not part of a carboxylate)
-    ///   7. Amines
-    ///   8. Hydroxyls
-    ///   9. Methyl groups
-    ///  10. Carbon chains (≥2 connected unclaimed C atoms after methyl termini are peeled off)
-    ///  11. Singleton fallback for anything remaining
+    ///   6. Acetyls (before plain carbonyls and methyls, which would otherwise split it in two)
+    ///   7. Carbonyls (C=O not part of a carboxylate or acetyl)
+    ///   8. Amines
+    ///   9. Hydroxyls
+    ///  10. Methyl groups
+    ///  11. Carbon chains (≥2 connected unclaimed C atoms after methyl termini are peeled off)
+    ///  12. Singleton fallback for anything remaining
     ///
     /// Connections are then derived by walking the molecule's bond list and recording every
     /// bond whose two endpoint atoms belong to different components.
@@ -379,8 +403,22 @@ impl MolComponents {
             add_comp!(ComponentType::Amide, comp_atoms);
         }
 
+        // --- 6. Acetyls ---
+        // char.carbonyl stores the =O oxygen. Carboxylate carbons (e.g. acetic acid) and ring
+        // carbonyl carbons are already claimed above, so they're skipped.
+        for &o_idx in &char.carbonyl {
+            if claimed.contains(&o_idx) {
+                continue;
+            }
+            let Some(comp_atoms) = acetyl_component_atoms(o_idx, atoms, adj, &claimed) else {
+                continue;
+            };
+            add_comp!(ComponentType::Acetyl, comp_atoms);
+        }
+
+        // --- 7. Carbonyls ---
         // char.carbonyl now stores O atom indices (the =O oxygen, not the C).
-        // Carboxylate O atoms are already claimed above, so they're naturally skipped.
+        // Carboxylate and acetyl O atoms are already claimed above, so they're naturally skipped.
         for &o_idx in &char.carbonyl {
             if claimed.contains(&o_idx) {
                 continue;
@@ -395,7 +433,7 @@ impl MolComponents {
             add_comp!(ComponentType::Carbonyl, comp_atoms);
         }
 
-        // --- 7. Amines ---
+        // --- 8. Amines ---
         for &n_idx in &char.amines {
             if claimed.contains(&n_idx) {
                 continue;
@@ -409,7 +447,7 @@ impl MolComponents {
             add_comp!(ComponentType::Amine, comp_atoms);
         }
 
-        // --- 8. Hydroxyls (O-H; skip O atoms already claimed by e.g. carboxylate) ---
+        // --- 9. Hydroxyls (O-H; skip O atoms already claimed by e.g. carboxylate) ---
         for &o_idx in &char.hydroxyl {
             if claimed.contains(&o_idx) {
                 continue;
@@ -423,7 +461,7 @@ impl MolComponents {
             add_comp!(ComponentType::Hydroxyl, comp_atoms);
         }
 
-        // --- 9. Methyl groups ---
+        // --- 10. Methyl groups ---
         for c_idx in 0..n_atoms {
             let Some(comp_atoms) = methyl_component_atoms(c_idx, atoms, adj, &claimed) else {
                 continue;
@@ -431,7 +469,7 @@ impl MolComponents {
             add_comp!(ComponentType::Methyl, comp_atoms);
         }
 
-        // --- 10. Carbon chains ---
+        // --- 11. Carbon chains ---
         // BFS over unclaimed carbons; runs of ≥2 become a Chain component.
         // Single isolated carbons fall through to the singleton fallback.
         let mut chain_seen = vec![false; n_atoms];
@@ -461,7 +499,7 @@ impl MolComponents {
             }
         }
 
-        // --- 11. Fallback: singleton component for every remaining atom ---
+        // --- 12. Fallback: singleton component for every remaining atom ---
         for i in 0..n_atoms {
             if !claimed.contains(&i) {
                 let el = atoms[i].element;
@@ -624,6 +662,29 @@ fn methyl_component_atoms(
     } else {
         None
     }
+}
+
+/// An acetyl group, CH3-C(=O)-, found from its carbonyl oxygen. The carbonyl carbon comes first,
+/// then the oxygen, then the methyl carbon and its hydrogens. Matches the atom order in
+/// `ComponentType::to_atoms_bonds`.
+fn acetyl_component_atoms(
+    o_idx: usize,
+    atoms: &[Atom],
+    adj: &[Vec<usize>],
+    claimed: &HashSet<usize>,
+) -> Option<Vec<usize>> {
+    let c_idx = *adj[o_idx]
+        .iter()
+        .find(|&&nb| atoms[nb].element == Carbon && !claimed.contains(&nb))?;
+
+    let methyl = adj[c_idx]
+        .iter()
+        .find_map(|&nb| methyl_component_atoms(nb, atoms, adj, claimed))?;
+
+    let mut comp_atoms = vec![c_idx, o_idx];
+    comp_atoms.extend(methyl);
+
+    Some(comp_atoms)
 }
 
 fn ring_component_clusters(rings: &[Ring]) -> Vec<Vec<usize>> {

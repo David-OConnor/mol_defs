@@ -23,7 +23,6 @@ use crate::{
         Atom, AtomRole, Bond, Chain, MolIdent, Residue, common::MoleculeCommon,
         peptide::MoleculePeptide, small::MoleculeSmall,
     },
-    util::mol_center_size,
 };
 
 const WATER_COMPS: [&str; 3] = ["HOH", "WAT", "DOD"];
@@ -2389,9 +2388,5 @@ impl MoleculePeptide {
         self.common.build_adjacency_list();
         self.common.update_next_sn();
         self.common.entity_i_range = None;
-
-        let (center, size) = mol_center_size(&self.common.atoms);
-        self.center = center;
-        self.size = size;
     }
 }

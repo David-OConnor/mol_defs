@@ -20,7 +20,6 @@ use dynamics::{
     params::{ProtFfChargeMapSet, prepare_peptide_mmcif},
     populate_hydrogens_dihedrals,
 };
-use lin_alg::f64::Vec3;
 use na_seq::{AminoAcid, Element};
 
 use crate::{
@@ -30,7 +29,6 @@ use crate::{
         Atom, AtomRole, Bond, Chain, HydrogenBond, PeptideIdent, Residue, common::MoleculeCommon,
     },
     reflection::{DensityPt, DensityRect, ReflectionsData},
-    util::mol_center_size,
 };
 
 /// A polypeptide molecule, e.g. a protein.
@@ -49,9 +47,6 @@ pub struct MoleculePeptide {
     // /// Initializes to empty; updated A/R when the appropriate view is selected.
     // pub sa_surface_pts: Option<Vec<Vec<Vec3F32>>>,
     pub secondary_structure: Vec<BackboneSS>,
-    /// Center and size are used for lighting, and for rotating ligands.
-    pub center: Vec3,
-    pub size: f32,
     /// The full (Or partial while WIP) results from the RCSB data api.
     pub rcsb_data: Option<PdbDataResults>,
     pub rcsb_files_avail: Option<FilesAvailable>,
@@ -204,15 +199,11 @@ impl MoleculePeptide {
         metadata: HashMap<String, String>,
         path: Option<PathBuf>,
     ) -> Self {
-        let (center, size) = mol_center_size(&atoms);
-
         let mut result = Self {
             // We create bonds only after
             common: MoleculeCommon::new(ident, atoms, bonds, metadata, path),
             chains,
             residues,
-            center,
-            size,
             ..Default::default()
         };
 

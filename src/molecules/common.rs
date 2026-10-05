@@ -461,6 +461,18 @@ impl MoleculeCommon {
         sum / n
     }
 
+    /// The distance from the centroid to the farthest atom. Uses `atom_posits`. Useful for framing
+    /// the molecule with the camera, and for placing lights.
+    pub fn bounding_radius(&self) -> f64 {
+        let center = self.centroid();
+
+        self.atom_posits
+            .iter()
+            .map(|p| (*p - center).magnitude_squared())
+            .fold(0., f64::max)
+            .sqrt()
+    }
+
     /// Uses atom internal positions.
     pub fn centroid_local(&self) -> Vec3 {
         let n = self.atoms.len() as f64;
