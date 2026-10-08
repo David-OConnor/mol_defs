@@ -12,7 +12,7 @@ use bio_apis::{
     ReqError, amber_geostd,
     amber_geostd::GeostdData,
     pubchem,
-    pubchem::{ProteinStructure, StructureSearchNamespace, properties},
+    pubchem::{ProteinStructure, SafetyData, StructureSearchNamespace, properties},
 };
 use bio_files::{
     ChargeType, Mol2, MolType, Pdbqt, PharmacophoreFeatureGeneric, Sdf, Xyz, create_bonds,
@@ -51,6 +51,9 @@ pub struct MoleculeSmall {
     pub frcmod_loaded: bool,
     /// E.g. loaded proteins from Pubchem.
     pub associated_structures: Vec<ProteinStructure>,
+    /// Reported compound GHS hazards. None means not loaded or unavailable, not safe.
+    /// Persisted as optional SDF/Mol2 metadata, independently of the structure format.
+    pub safety_data: Option<SafetyData>,
     pub characterization: Option<MolCharacterization>,
     pub conformer: Option<Conformer>,
     pub pharmacophore: Pharmacophore,
@@ -91,6 +94,7 @@ const MD_KEYS_INCHI: &[&str] = &["INCHI", "PUBCHEM_IUPAC_INCHI"];
 const MD_KEYS_INCHI_KEY: &[&str] = &["INCHIKEY", "PUBCHEM_IUPAC_INCHIKEY"];
 const MD_KEYS_IUPAC_NAME: &[&str] = &["IUPAC_NAME", "PUBCHEM_IUPAC_NAME"];
 const MD_KEYS_PUBCHEM_TITLE: &[&str] = &["PUBCHEM_TITLE"];
+const MD_KEY_SAFETY_DATA: &str = "PUBCHEM_GHS_SAFETY_DATA";
 /// HMDB's own SDF distribution puts its accession in the generic `DATABASE_ID` field (paired with
 /// `DATABASE_NAME`), so `HMDB_ID` is ours; the rest are cross-references other sources publish.
 /// ChEBI uses the "HMDB Database Links" metadata tag to indicate these.
@@ -244,6 +248,9 @@ impl MoleculeSmall {
         path: Option<PathBuf>,
     ) -> Self {
         let mut idents = idents_from_metadata(&ident, &metadata);
+        let safety_data = metadata
+            .get(MD_KEY_SAFETY_DATA)
+            .and_then(|value| serde_json::from_str(value).ok());
 
         let common = MoleculeCommon::new(ident, atoms, bonds, metadata, path);
 
@@ -259,8 +266,15 @@ impl MoleculeSmall {
         Self {
             common,
             idents,
+            safety_data,
             ..Default::default()
         }
+    }
+
+    /// Invalidate cached compound hazards after a chemical structure edit.
+    pub fn clear_safety_data(&mut self) {
+        self.safety_data = None;
+        self.common.metadata.remove(MD_KEY_SAFETY_DATA);
     }
 
     pub fn update_characterization(&mut self) {
@@ -443,6 +457,12 @@ impl MoleculeSmall {
     /// Also, serialize the pocket atoms.
     fn metadata_with_ids_pocket(&self) -> HashMap<String, String> {
         let mut res = self.common.metadata.clone();
+        res.remove(MD_KEY_SAFETY_DATA);
+        if let Some(data) = &self.safety_data
+            && let Ok(json) = serde_json::to_string(data)
+        {
+            res.insert(MD_KEY_SAFETY_DATA.to_owned(), json);
+        }
 
         // Note: If already present, these may be redundant with metadata already loaded.
         // Insert them here in case they're not.

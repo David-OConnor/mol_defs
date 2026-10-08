@@ -30,6 +30,7 @@ dynamics = { version = "0.2.2", features = ["encode"] }
 bincode = "2.0.1"
 rayon = "1.12.0"  # Parallel execution on CPU using thread pools.
 rand = "0.10.2"
+serde_json = "1.0"
 
 # Marching cubes, for the solvent-accessible surface. Not render-only: molecular volume and
 # topological surface area are measured from that surface, and both feed property inference.
