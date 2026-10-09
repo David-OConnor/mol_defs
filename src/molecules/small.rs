@@ -250,7 +250,9 @@ impl MoleculeSmall {
         let mut idents = idents_from_metadata(&ident, &metadata);
         let safety_data = metadata
             .get(MD_KEY_SAFETY_DATA)
-            .and_then(|value| serde_json::from_str(value).ok());
+            .and_then(|value| serde_json::from_str::<SafetyData>(value).ok())
+            // Older caches merged classifications; their individual flags cannot be recovered.
+            .filter(|data| data.sources.len() <= 1);
 
         let common = MoleculeCommon::new(ident, atoms, bonds, metadata, path);
 
