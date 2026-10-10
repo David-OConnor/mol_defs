@@ -4,6 +4,7 @@
 /// Atoms, Bonds, Residues, Chains, etc. These contain application-specific data and organization that is distinct
 /// from `bio_files::AtomGeneric` etc.
 /// These are core to the operation of this application.
+pub mod amino_acid;
 pub mod common;
 pub mod conformers;
 mod embed_3d;
@@ -906,7 +907,9 @@ fn init_bonds_chains_res(
     let mut sn_to_res: HashMap<u32, usize> = HashMap::new();
     for (i, res) in residues.iter().enumerate() {
         if let Some(&chain_i) = res.atom_sns.first().and_then(|sn| atom_sn_to_chain.get(sn)) {
-            chain_sn_to_res.entry((chain_i, res.serial_number)).or_insert(i);
+            chain_sn_to_res
+                .entry((chain_i, res.serial_number))
+                .or_insert(i);
         }
         sn_to_res.entry(res.serial_number).or_insert(i);
     }

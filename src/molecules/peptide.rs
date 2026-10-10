@@ -273,6 +273,11 @@ impl MoleculePeptide {
             return;
         }
 
+        // e.g. a peptide built from a sequence. The RCSB has nothing for these.
+        if pdb_id_extended(&self.common.ident).is_none() {
+            return;
+        }
+
         let ident = self.common.ident.clone(); // data the worker needs
         let (tx, rx) = mpsc::channel(); // one-shot channel
 
