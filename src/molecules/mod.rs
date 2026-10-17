@@ -81,7 +81,7 @@ impl MolType {
             Lipid => "mol2",       // todo?
             Water => "",
         }
-        .to_string()
+            .to_string()
     }
 
     pub fn color(self) -> (u8, u8, u8) {
@@ -95,6 +95,21 @@ impl MolType {
             Pocket => (255, 255, 255),
             Water => (0, 0, 0),
         }
+    }
+}
+
+impl Display for MolType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let v = match self {
+            MolType::Peptide => "Protein",
+            MolType::Ligand => "Ligand",
+            MolType::NucleicAcid => "Nucleic Acid",
+            MolType::Lipid => "Lipid",
+            MolType::Water => "Water",
+            MolType::Pocket => "Pocket",
+        };
+
+        write!(f, "{v}")
     }
 }
 
@@ -226,7 +241,7 @@ impl<'a> MolGenericRef<'a> {
                     },
                     ..Default::default()
                 }
-                .to_sdf())
+                    .to_sdf())
             }
             _ => Err(io::Error::other("Not implemented")),
         }
@@ -250,7 +265,7 @@ impl<'a> MolGenericRef<'a> {
                     },
                     ..Default::default()
                 }
-                .to_mol2())
+                    .to_mol2())
             }
             _ => Err(io::Error::other("Not implemented")),
         }
@@ -274,7 +289,7 @@ impl<'a> MolGenericRef<'a> {
                     },
                     ..Default::default()
                 }
-                .to_pdbqt())
+                    .to_pdbqt())
             }
             _ => Err(io::Error::other("Not implemented")),
         }
@@ -287,7 +302,7 @@ impl<'a> MolGenericRef<'a> {
                 common: p.common.clone(),
                 ..Default::default()
             }
-            .to_xyz()),
+                .to_xyz()),
             _ => Err(io::Error::other("Not implemented")),
         }
     }
@@ -691,7 +706,7 @@ impl Atom {
                 AtomRole::C_Prime,
                 AtomRole::O_Backbone,
             ]
-            .contains(&r),
+                .contains(&r),
             None => false,
         }
     }
