@@ -18,10 +18,6 @@ use bio_files::{
     ChargeType, Mol2, MolType, Pdbqt, PharmacophoreFeatureGeneric, Sdf, Xyz, create_bonds,
     md_params::{ForceFieldParams, ForceFieldParamsVec},
 };
-use dynamics::{
-    param_inference::{AmberDefSet, assign_missing_params, find_ff_types},
-    partial_charge_inference::infer_charge,
-};
 use lin_alg::f64::Vec3;
 use na_seq::Element;
 
@@ -961,94 +957,82 @@ impl MoleculeSmall {
         gaff2: &ForceFieldParams,
         skip_mol_specific: bool,
     ) {
-        self.conformer = None;
-        self.ff_params_loaded = true;
-        for atom in &self.common.atoms {
-            if atom.force_field_type.is_none() || atom.partial_charge.is_none() {
-                self.ff_params_loaded = false;
-                break;
-            }
-        }
-
-        if mol_specific_param_set
-            .keys()
-            .any(|k| k.eq_ignore_ascii_case(&self.common.ident))
+        if let Err(error) =
+            self.try_update_amber_params(mol_specific_param_set, gaff2, skip_mol_specific)
         {
+            self.ff_params_loaded = false;
+            self.frcmod_loaded = false;
+            eprintln!(
+                "Unable to assign Amber parameters for {}: {error}",
+                self.common.ident
+            );
+        }
+    }
+
+    /// Amber compatibility for analysis/training callers. General family assignment is
+    /// `FfParamSet::parameterize`; charges and parameters can also be requested separately.
+    pub fn try_update_amber_params(
+        &mut self,
+        specific: &mut HashMap<String, ForceFieldParams>,
+        gaff2: &ForceFieldParams,
+        skip_parameters: bool,
+    ) -> Result<(), dynamics::ParamError> {
+        use dynamics::{
+            params::amber::AmberSet,
+            params::{FfParamSet, ParameterizationOptions},
+        };
+        let set = FfParamSet {
+            backend: Box::new(AmberSet {
+                small_mol: Some(gaff2.clone()),
+                ..AmberSet::default()
+            }),
+            ..FfParamSet::default()
+        };
+        let input = dynamics::MolDynamics {
+            atoms: self.common.atoms.iter().map(|a| a.to_generic()).collect(),
+            bonds: self.common.bonds.iter().map(|b| b.to_generic()).collect(),
+            adjacency_list: Some(self.common.adjacency_list.clone()),
+            mol_specific_params: specific
+                .iter()
+                .find(|(key, _)| key.eq_ignore_ascii_case(&self.common.ident))
+                .map(|(_, parameters)| parameters.clone()),
+            ..Default::default()
+        };
+        let options = ParameterizationOptions::local_only();
+        let (names, charges, parameters) = if skip_parameters {
+            let typed = set.assign_atom_types(&input, &options)?;
+            (
+                typed.atom_types().to_vec(),
+                typed.assign_partial_charges()?.values,
+                None,
+            )
+        } else {
+            let prepared = set.parameterize_with_options(&input, &options)?;
+            (
+                prepared
+                    .atoms
+                    .iter()
+                    .map(|a| a.force_field_type.clone().unwrap())
+                    .collect(),
+                prepared
+                    .atoms
+                    .iter()
+                    .map(|a| a.partial_charge.unwrap())
+                    .collect(),
+                prepared.mol_specific_params,
+            )
+        };
+        for ((atom, name), charge) in self.common.atoms.iter_mut().zip(names).zip(charges) {
+            atom.force_field_type = Some(name);
+            atom.partial_charge = Some(charge);
+        }
+        if let Some(parameters) = parameters {
+            specific.insert(self.common.ident.clone(), parameters);
             self.frcmod_loaded = true;
         }
-
-        // println!("Inferring FF parameter data...");
-        // Note: There is an all-in-one `update_small_mol_params` fn we can use as well; it's
-        // easier to use nominally, but this approach works better for our this-project Atom and bond types,
-        // and loaded flags.
-
-        let mut atoms_gen: Vec<_> = self.common.atoms.iter().map(|a| a.to_generic()).collect();
-        let bonds_gen: Vec<_> = self.common.bonds.iter().map(|a| a.to_generic()).collect();
-
-        if !self.ff_params_loaded {
-            let defs = AmberDefSet::new().unwrap();
-            let ff_types = find_ff_types(&atoms_gen, &bonds_gen, &defs);
-
-            for (i, atom) in self.common.atoms.iter_mut().enumerate() {
-                atom.force_field_type = Some(ff_types[i].clone());
-
-                // We re-use `atoms_gen` for mol specific params below; update atoms gen here.
-                atoms_gen[i].force_field_type = Some(ff_types[i].clone());
-            }
-
-            let charge = match infer_charge(&atoms_gen, &bonds_gen) {
-                Ok(v) => v,
-                Err(e) => {
-                    eprintln!("Error inferring params: {e:?}");
-                    return;
-                }
-            };
-
-            for (i, atom) in self.common.atoms.iter_mut().enumerate() {
-                atom.partial_charge = Some(charge[i]);
-            }
-
-            // // todo: This print and loop are temp.
-            // println!("\n FF types computed:");
-            // for atom in &self.common.atoms {
-            //     println!(
-            //         "--{}: {} {:.4}",
-            //         atom.serial_number,
-            //         atom.force_field_type.as_ref().unwrap(),
-            //         atom.partial_charge.unwrap()
-            //     );
-            // }
-
-            self.ff_params_loaded = true;
-        }
-
-        if !self.frcmod_loaded && !skip_mol_specific {
-            let mol_specific_params =
-                match assign_missing_params(&atoms_gen, &self.common.adjacency_list, gaff2) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        eprintln!(
-                            "Error inferring params for mol {}: {e:?}",
-                            self.common.ident
-                        );
-                        return;
-                    }
-                };
-
-            // println!("\n\nDihe FRCMOD created:");
-            // for p in &mol_specific_params.dihedral {
-            //     println!("\nDihe: {:?}", p);
-            // }
-
-            // println!("\n\nImproper FRCMOD created:");
-            // for p in &mol_specific_params.improper {
-            //     println!("Improp: {:?}", p);
-            // }
-
-            mol_specific_param_set.insert(self.common.ident.to_owned(), mol_specific_params);
-            self.frcmod_loaded = true;
-        }
-        // println!("Inference complete.");
+        self.ff_params_loaded = true;
+        self.conformer = None;
+        Ok(())
     }
 }
 

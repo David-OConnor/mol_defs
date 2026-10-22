@@ -36,7 +36,7 @@ use bio_files::{
     create_bonds,
     mol_templates::{TemplateData, load_templates},
 };
-use dynamics::params::{AMINO_19, AMINO_CT12, AMINO_NT12};
+use dynamics::params::amber::{AMINO_19, AMINO_CT12, AMINO_NT12};
 use lin_alg::f64::{Quaternion, Vec3};
 use na_seq::{AminoAcid, AtomTypeInRes, Element};
 

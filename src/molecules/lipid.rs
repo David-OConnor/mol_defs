@@ -777,7 +777,7 @@ impl MoleculeLipid {
 }
 
 /// Create lipid molecules from Amber's Lipids21.lib, which is included in the binary.
-/// `lib_data` is likely `dynamics::LIPID_21_LIB`.
+/// `lib_data` is likely `dynamics::params::amber::LIPID_21_LIB`.
 pub fn load_lipid_templates(lib_data: &str) -> io::Result<Vec<MoleculeLipid>> {
     let mut result = Vec::new();
 

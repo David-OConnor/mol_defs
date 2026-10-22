@@ -17,7 +17,7 @@ use bio_apis::{
 };
 use bio_files::{BackboneSS, DensityMap, ExperimentalMethod, MmCif, ResidueType, create_bonds};
 use dynamics::{
-    params::{ProtFfChargeMapSet, prepare_peptide_mmcif},
+    params::amber::{ProtFfChargeMapSet, prepare_peptide_mmcif},
     populate_hydrogens_dihedrals,
 };
 use na_seq::{AminoAcid, Element};

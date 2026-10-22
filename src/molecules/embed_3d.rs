@@ -249,7 +249,11 @@ $$$$
 
         // As on load: FF types, partial charges, and the molecule-specific params from them.
         let mut specific = HashMap::new();
-        mol.update_ff_related(&mut specific, param_set.small_mol.as_ref().unwrap(), false);
+        mol.update_ff_related(
+            &mut specific,
+            param_set.amber().unwrap().small_mol.as_ref().unwrap(),
+            false,
+        );
         let specific = specific.get(&mol.common.ident);
 
         let common = &mut mol.common;

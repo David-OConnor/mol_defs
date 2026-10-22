@@ -44,7 +44,7 @@ use bio_files::{
     BondType, ResidueEnd, ResidueType,
     mol_templates::{TemplateData, load_templates},
 };
-use dynamics::params::{OL24_LIB, RNA_LIB};
+use dynamics::params::amber::{OL24_LIB, RNA_LIB};
 use lin_alg::f64::{Quaternion, Vec3, Y_VEC};
 use na_seq::{
     AminoAcid,
