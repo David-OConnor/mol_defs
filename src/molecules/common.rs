@@ -28,6 +28,27 @@ pub enum BondGeom {
     Tetrahedral,
 }
 
+/// How a molecule is rendered. UI only.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum MolVisibility {
+    #[default]
+    Visible,
+    /// Drawn faded, e.g. so other molecules stand out.
+    Dimmed,
+    Hidden,
+}
+
+impl MolVisibility {
+    /// Cycles Visible → Dimmed → Hidden.
+    pub fn next(self) -> Self {
+        match self {
+            Self::Visible => Self::Dimmed,
+            Self::Dimmed => Self::Hidden,
+            Self::Hidden => Self::Visible,
+        }
+    }
+}
+
 /// Contains fields shared by all molecule types.
 #[derive(Debug, Clone)]
 pub struct MoleculeCommon {
@@ -50,7 +71,7 @@ pub struct MoleculeCommon {
     pub metadata: HashMap<String, String>,
     /// This is a bit different, as it's for our UI only. Doesn't fit with the others,
     /// but is safer and easier than trying to sync Vec indices.
-    pub visible: bool,
+    pub visibility: MolVisibility,
     pub path: Option<PathBuf>,
     /// This is a cached derivative of `path`.
     pub filename: String,
@@ -71,7 +92,7 @@ pub struct MoleculeCommon {
 }
 
 impl Default for MoleculeCommon {
-    /// Only so we can set visible: true.
+    /// Only so we can set `next_atom_sn`.
     fn default() -> Self {
         Self {
             ident: String::new(),
@@ -81,7 +102,7 @@ impl Default for MoleculeCommon {
             bonds: Vec::new(),
             adjacency_list: Vec::new(),
             atom_posits: Vec::new(),
-            visible: true,
+            visibility: MolVisibility::Visible,
             path: None,
             filename: String::new(),
             selected_for_md: None,
@@ -95,6 +116,15 @@ impl Default for MoleculeCommon {
 }
 
 impl MoleculeCommon {
+    /// Drawn at all; i.e. not hidden.
+    pub fn visible(&self) -> bool {
+        self.visibility != MolVisibility::Hidden
+    }
+
+    pub fn dimmed(&self) -> bool {
+        self.visibility == MolVisibility::Dimmed
+    }
+
     /// If `bonds` is none, create it based on atom distances. Useful in the case of mmCIF files,
     /// which usually lack bond information.
     ///

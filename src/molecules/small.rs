@@ -977,10 +977,7 @@ impl MoleculeSmall {
         gaff2: &ForceFieldParams,
         skip_parameters: bool,
     ) -> Result<(), dynamics::ParamError> {
-        use dynamics::{
-            params::amber::AmberSet,
-            params::{FfParamSet, ParameterizationOptions},
-        };
+        use dynamics::params::{FfParamSet, ParameterizationOptions, amber::AmberSet};
         let set = FfParamSet {
             backend: Box::new(AmberSet {
                 small_mol: Some(gaff2.clone()),

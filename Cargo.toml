@@ -1,6 +1,6 @@
 [package]
 name = "mol_defs"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 authors = ["David O'Connor <the_alchemist@fastmail.com>"]
 description = "Molecule data structures for computational chemistry and drug discovery"
@@ -22,14 +22,14 @@ exclude = [".gitignore"]
 # todo: Try to cut down on these dependencies; most notably dynamics.
 # todo: This may take reorganization.
 lin_alg = { version = "1.4.3", features = ["encode"] }
-na_seq = "0.3.15"
-bio_apis = { version = "0.3.0", features = ["encode"] }
-bio_files = { version = "0.5.3", features = ["encode"] }
-dynamics = { version = "0.2.2", features = ["encode"] }
+na_seq = "0.3.16"
+bio_apis = { version = "0.3.1", features = ["encode"] }
+bio_files = { version = "0.5.4", features = ["encode"] }
+dynamics = { version = "0.2.4", features = ["encode"] }
 
 bincode = "2.0.1"
-rayon = "1.12.0"  # Parallel execution on CPU using thread pools.
-rand = "0.10.2"
+rayon = "1.12"  # Parallel execution on CPU using thread pools.
+rand = "0.10"
 serde_json = "1.0"
 
 # Marching cubes, for the solvent-accessible surface. Not render-only: molecular volume and
@@ -38,16 +38,16 @@ mcubes = "0.1.7"
 
 # Only for handing meshes to a render engine. A consumer that just needs the data structures
 # (e.g. ML inference) shouldn't have to pull in a GPU stack.
-graphics = { version = "0.6.3", features = ["app_utils"], optional = true }
+graphics = { version = "0.6.7", features = ["app_utils"], optional = true }
 
 # We use these when developing locally to reduce friction.
 [patch.crates-io]
-graphics = { path = "../../graphics" }
+#graphics = { path = "../../graphics" }
 #lin_alg = { path = "../../lin_alg" }
 #na_seq = { path = "../na_seq" }
-bio_apis = { path = "../bio_apis" }
-bio_files = { path = "../bio_files" }
-dynamics = { path = "../dynamics" }
+#bio_apis = { path = "../bio_apis" }
+#bio_files = { path = "../bio_files" }
+#dynamics = { path = "../dynamics" }
 
 
 [features]

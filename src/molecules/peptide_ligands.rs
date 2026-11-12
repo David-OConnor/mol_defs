@@ -2264,6 +2264,11 @@ impl MoleculePeptide {
         for res in &mut self.residues {
             res.atoms = res.atoms.iter().filter_map(|&a| map_atom(a)).collect();
         }
+        self.hidden_residues = self
+            .hidden_residues
+            .iter()
+            .filter_map(|&r| map_res(r))
+            .collect();
 
         // Chains that held only this residue go with it.
         let mut chain_map = Vec::with_capacity(self.chains.len());

@@ -71,6 +71,8 @@ pub struct MoleculePeptide {
     /// don't parse intact. Adding, removing, and detaching ligands (see `peptide_ligands`) keep this
     /// in sync with the peptide.
     pub source_cif: Option<String>,
+    /// Indices of residues not drawn or selectable. Display only.
+    pub hidden_residues: HashSet<usize>,
 }
 
 /// The extended, 12-character form of a PDB ID, e.g. `1CRN` -> `"pdb_00001crn"`. Accepts either
@@ -188,6 +190,15 @@ pub fn idents_from_mmcif(m: &MmCif) -> Vec<PeptideIdent> {
 }
 
 impl MoleculePeptide {
+    /// Whether this atom's residue is hidden. See `hidden_residues`.
+    pub fn atom_hidden(&self, atom_i: usize) -> bool {
+        self.common
+            .atoms
+            .get(atom_i)
+            .and_then(|a| a.residue)
+            .is_some_and(|r| self.hidden_residues.contains(&r))
+    }
+
     /// This constructor handles assumes details are ingested into a common format upstream. It adds
     /// them to the resulting structure, and augments it with bonds, hydrogen positions, and other things A/R.
     pub fn new(
